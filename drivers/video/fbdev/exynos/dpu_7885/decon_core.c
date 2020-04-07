@@ -43,8 +43,13 @@
 #include "decon.h"
 #include "dsim.h"
 #include "./panels/dsim_panel.h"
+#include "decon_notify.h"
 #include "../../../../staging/android/sw_sync.h"
 #include "dpp.h"
+
+#ifdef CONFIG_SAMSUNG_TUI
+#include "stui_inf.h"
+#endif
 
 /*#define BRINGUP_DECON_BIST*/
 #define DECON_DEBUG_SFR 0x14860400
@@ -60,6 +65,7 @@ module_param(win_update_log_level, int, 0644);
 struct decon_device *decon_drvdata[MAX_DECON_CNT] = {NULL, NULL, NULL};
 EXPORT_SYMBOL(decon_drvdata);
 
+void decon_wait_for_vstatus(struct decon_device *decon, u32 timeout);
 static void dpp_dump(struct decon_device *decon)
 {
 	int i;
@@ -355,9 +361,11 @@ static void decon_set_black_window(struct decon_device *decon)
 	decon_reg_update_req_window(decon->id, decon->dt.dft_win);
 }
 
+/* ---------- TUI INTERFACE ----------- */
 int decon_tui_protection(bool tui_en)
 {
 	int ret = 0;
+	int i;
 	int win_idx;
 	struct decon_mode_info psr;
 	struct decon_device *decon = decon_drvdata[0];
@@ -365,31 +373,98 @@ int decon_tui_protection(bool tui_en)
 
 	decon_info("%s:state %d: out_type %d:+\n", __func__,
 				tui_en, decon->dt.out_type);
+
+	mutex_lock(&decon->lock);
+	if (decon->state == DECON_STATE_OFF) {
+		decon_warn("%s: decon is already disabled(tui=%d)\n", __func__, tui_en);
+		mutex_unlock(&decon->lock);
+		return -EBUSY;
+	}
+	mutex_unlock(&decon->lock);
+
 	if (tui_en) {
+		/* 1.Blocking LPD */
 		mutex_lock(&decon->lock);
 		decon_hiber_block_exit(decon);
-
+		/* 2.Finish frmame update of normal OS */
 		flush_kthread_worker(&decon->up.worker);
 
-		decon_wait_for_vsync(decon, VSYNC_TIMEOUT_MSEC);
+		if (decon->dt.psr_mode == DECON_VIDEO_MODE) {
+			struct decon_window_regs win_regs = {0, };
+			struct decon_lcd *lcd = decon->lcd_info;
+			/* 3.Disable all the windows except max window */
+			for (i = 0; i < decon->dt.max_win; i++) {
+				/* Make the decon registers a reset value for each window
+				 * win_regs.wincon = 0;
+				 * win_regs->type = IDMA_VG0;
+				 * global data and winamp are not set,
+				 * if win_en is 0 (wincon = 0)
+				 */
+				win_regs.type = IDMA_VG0;
+				decon_reg_set_window_control(decon->id, i, &win_regs, 0);
+			}
+			/* CH MAP TEST
+			 * decon->dt.dft_win = 3;
+			 * decon->dt.dft_idma = IDMA_G0;
+			 */
+			/* 4.Set the window white */
+			win_regs.wincon = wincon(0x8, 0xFF, 0xFF, 0xFF, DECON_BLENDING_NONE,
+					decon->dt.dft_win);
+			win_regs.start_pos = win_start_pos(0, 0);
+			win_regs.end_pos = win_end_pos(0, 0, lcd->xres, lcd->yres);
+			decon_info("xres %d yres %d win_start_pos %x win_end_pos %x\n",
+					lcd->xres, lcd->yres, win_regs.start_pos,
+					win_regs.end_pos);
+
+			win_regs.colormap = 0xffffff;/* 0xffffff is white color */
+			win_regs.pixel_count = lcd->xres * lcd->yres;
+			win_regs.whole_w = lcd->xres;
+			win_regs.whole_h = lcd->yres;
+			win_regs.offset_x = 0;
+			win_regs.offset_y = 0;
+			win_regs.type = decon->dt.dft_idma;
+			decon_info("pixel_count(%d), whole_w(%d), whole_h(%d), x(%d), y(%d)\n",
+					win_regs.pixel_count, win_regs.whole_w,
+					win_regs.whole_h, win_regs.offset_x,
+					win_regs.offset_y);
+			decon_reg_set_window_control(decon->id, decon->dt.dft_win,
+					&win_regs, true);
+			decon_reg_all_win_shadow_update_req(decon->id);
+
+			/* 5.decon start */
+			decon_to_psr_info(decon, &psr);
+			decon_reg_start(decon->id, &psr);
+
+			/* 6.wait vstatus and shadow update */
+			decon_wait_for_vstatus(decon, 50);
+			if (decon_reg_wait_for_update_timeout(decon->id, SHADOW_UPDATE_TIMEOUT) < 0) {
+				decon_dump(decon);
+				BUG();
+			}
+			decon->cur_using_dpp = 0;
+			decon_dpp_stop(decon, false);
+		} else {
+			/* 3.Make window update information the full size */
 #ifdef CONFIG_FB_WINDOW_UPDATE
-		if (decon->win_up.enabled)
-			dpu_set_win_update_config(decon, NULL);
+			if (decon->win_up.enabled)
+				dpu_set_win_update_config(decon, NULL);
 #endif
-		decon_to_psr_info(decon, &psr);
-		decon_reg_stop_nreset(decon->id, &psr);
+			decon_to_psr_info(decon, &psr);
+			decon_reg_stop_nreset(decon->id, &psr);
 
-		decon->cur_using_dpp = 0;
-		decon_dpp_stop(decon, false);
+			decon->cur_using_dpp = 0;
+			decon_dpp_stop(decon, false);
 
-		/* after stopping decon, we can now update registers
-		 * without considering per frame condition (8895)
-		 */
-		for (win_idx = 0; win_idx < decon->dt.max_win; win_idx++)
-			decon_reg_set_win_enable(decon->id, win_idx, false);
-		decon_reg_all_win_shadow_update_req(decon->id);
-		decon_reg_update_req_global(decon->id);
-		decon_wait_for_vsync(decon, VSYNC_TIMEOUT_MSEC);
+			/* after stopping decon, we can now update registers
+			 * without considering per frame condition (8895)
+			 */
+			for (win_idx = 0; win_idx < decon->dt.max_win; win_idx++)
+				decon_reg_set_win_enable(decon->id, win_idx, false);
+			decon_reg_all_win_shadow_update_req(decon->id);
+			decon_reg_update_req_global(decon->id);
+			decon_wait_for_vsync(decon, VSYNC_TIMEOUT_MSEC);
+
+		}
 
 		decon->state = DECON_STATE_TUI;
 		aclk_khz = clk_get_rate(decon->res.aclk) / 1000U;
@@ -566,8 +641,12 @@ static int decon_disable(struct decon_device *decon)
 
 	decon_abd_enable(decon, 0);
 
-	if (decon->state == DECON_STATE_TUI)
+	if (decon->state == DECON_STATE_TUI) {
+#ifdef CONFIG_SAMSUNG_TUI
+		stui_cancel_session();
+#endif
 		decon_tui_protection(false);
+	}
 
 	mutex_lock(&decon->lock);
 
@@ -718,6 +797,7 @@ static int decon_blank(int blank_mode, struct fb_info *info)
 			decon_err("skipped to disable decon\n");
 			goto blank_exit;
 		}
+		atomic_set(&decon->win_config, 1);
 		break;
 	case FB_BLANK_UNBLANK:
 		DPU_EVENT_LOG(DPU_EVT_UNBLANK, &decon->sd, ktime_set(0, 0));
@@ -726,8 +806,7 @@ static int decon_blank(int blank_mode, struct fb_info *info)
 			decon_err("skipped to enable decon\n");
 			goto blank_exit;
 		}
-		if (!ret)
-			atomic_set(&decon->win_config, 1);
+		atomic_set(&decon->win_config, 1);
 		break;
 	case FB_BLANK_VSYNC_SUSPEND:
 	case FB_BLANK_HSYNC_SUSPEND:
@@ -1710,9 +1789,16 @@ static int decon_prepare_win_config(struct decon_device *decon,
 	}
 
 	if (atomic_read(&decon->win_config)) {
-		decon_info("%s: %d\n", __func__, regs->num_of_window);
-		if (regs->num_of_window)
+		struct fb_info *fbinfo = decon->win[decon->dt.dft_win]->fbinfo;
+		struct fb_event v = {0, };
+		int blank = FB_BLANK_UNBLANK;
+
+		v.info = fbinfo;
+		v.data = &blank;
+		if (regs->num_of_window) {
 			atomic_set(&decon->win_config, 0);
+			decon_notifier_call_chain(DECON_EVENT_FRAME, &v);
+		}
 	}
 
 	decon_dbg("%s -\n", __func__);
@@ -2966,11 +3052,17 @@ static void decon_shutdown(struct platform_device *pdev)
 {
 	struct decon_device *decon = platform_get_drvdata(pdev);
 	struct fb_info *fbinfo = decon->win[decon->dt.dft_win]->fbinfo;
-
-	decon_enter_shutdown(decon);
+	struct fb_event v = {0, };
+	int blank = FB_BLANK_POWERDOWN;
 
 	decon_info("%s + state:%d\n", __func__, decon->state);
-	lock_fb_info(fbinfo);
+	decon_enter_shutdown(decon);
+
+	if (!lock_fb_info(fbinfo)) {
+		decon_warn("%s: fblock is failed\n", __func__);
+		return;
+	}
+
 	DPU_EVENT_LOG(DPU_EVT_DECON_SHUTDOWN, &decon->sd, ktime_set(0, 0));
 
 	if (decon->dt.psr_mode == DECON_MIPI_COMMAND_MODE)
@@ -2978,10 +3070,17 @@ static void decon_shutdown(struct platform_device *pdev)
 
 	decon_hiber_block_exit(decon);
 	/* Unused DECON state is DECON_STATE_INIT */
-	if (decon->state == DECON_STATE_ON)
+	if (decon->state == DECON_STATE_ON) {
+		v.info = fbinfo;
+		v.data = &blank;
+
+		decon_notifier_call_chain(FB_EARLY_EVENT_BLANK, &v);
 		decon_disable(decon);
+		decon_notifier_call_chain(FB_EVENT_BLANK, &v);
+	}
 
 	unlock_fb_info(fbinfo);
+
 	decon_info("%s -\n", __func__);
 }
 

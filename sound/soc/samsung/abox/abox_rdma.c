@@ -669,8 +669,6 @@ static int abox_rdma_compr_trigger(struct snd_compr_stream *stream, int cmd)
 			dev_err(dev, "%s: pause cmd failed(%d)\n", __func__,
 					ret);
 		}
-
-		abox_request_dram_on(platform_data->pdev_abox, dev, false);
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
 		dev_info(dev, "SNDRV_PCM_TRIGGER_STOP\n");
@@ -705,8 +703,6 @@ static int abox_rdma_compr_trigger(struct snd_compr_stream *stream, int cmd)
 		data->byte_offset = 0;
 		data->copied_total = 0;
 		data->received_total = 0;
-
-		abox_request_dram_on(platform_data->pdev_abox, dev, false);
 		break;
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
@@ -714,8 +710,6 @@ static int abox_rdma_compr_trigger(struct snd_compr_stream *stream, int cmd)
 				(cmd == SNDRV_PCM_TRIGGER_START) ?
 				"SNDRV_PCM_TRIGGER_START" :
 				"SNDRV_PCM_TRIGGER_PAUSE_RELEASE");
-
-		abox_request_dram_on(platform_data->pdev_abox, dev, true);
 
 		data->start = 1;
 		ret = abox_rdma_mailbox_send_cmd(dev, CMD_COMPR_START);
@@ -1226,6 +1220,31 @@ static int abox_rdma_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
+static int abox_rdma_progress(struct abox_platform_data *data)
+{
+	unsigned int val = 0;
+
+	regmap_read(data->abox_data->regmap, ABOX_RDMA_STATUS_ID(data->id), &val);
+	dev_info(&data->pdev_abox->dev, "%s:0x%x\n", __func__, val);
+	return !!(val & ABOX_RDMA_PROGRESS_MASK);
+}
+
+static void abox_rdma_disable_barrier(struct device *dev,
+		struct abox_platform_data *data)
+{
+	int id = data->id;
+	u64 timeout = local_clock() + ABOX_DMA_TIMEOUT_NS;
+
+	while (abox_rdma_progress(data)) {
+		if (local_clock() <= timeout) {
+			udelay(1000);
+			continue;
+		}
+		dev_warn_ratelimited(dev, "RDMA disable timeout[%d]\n", id);
+		break;
+	}
+}
+
 static int abox_rdma_hw_free(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
@@ -1308,9 +1327,6 @@ static int abox_rdma_trigger(struct snd_pcm_substream *substream, int cmd)
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
-		if (memblock_is_memory(substream->runtime->dma_addr))
-			abox_request_dram_on(data->pdev_abox, dev, true);
-
 		pcmtask_msg->param.trigger = 1;
 		result = abox_rdma_request_ipc(dev, msg.ipcid, &msg,
 				sizeof(msg), 1, 0);
@@ -1332,8 +1348,7 @@ static int abox_rdma_trigger(struct snd_pcm_substream *substream, int cmd)
 			break;
 		}
 
-		if (memblock_is_memory(substream->runtime->dma_addr))
-			abox_request_dram_on(data->pdev_abox, dev, false);
+		abox_rdma_disable_barrier(dev, data);
 		break;
 	default:
 		result = -EINVAL;
@@ -1428,7 +1443,7 @@ static int abox_rdma_close(struct snd_pcm_substream *substream)
 	struct device *dev = platform->dev;
 	struct abox_platform_data *data = dev_get_drvdata(dev);
 	int id = data->id;
-	int result, i;
+	int result;
 	ABOX_IPC_MSG msg;
 	struct IPC_PCMTASK_MSG *pcmtask_msg = &msg.msg.pcmtask;
 
@@ -1441,18 +1456,6 @@ static int abox_rdma_close(struct snd_pcm_substream *substream)
 	msg.task_id = pcmtask_msg->channel_id = id;
 	result = abox_rdma_request_ipc(dev, msg.ipcid, &msg,
 			sizeof(msg), 0, 1);
-
-	switch (data->type) {
-	default:
-		for (i = ABOX_DMA_TIMEOUT_US;
-				(readl(data->sfr_base + ABOX_RDMA_CTRL0)
-				& ABOX_RDMA_ENABLE_MASK) && i; i--) {
-			udelay(1);
-		}
-		if (!i)
-			dev_warn_ratelimited(dev, "disable timeout[%d]\n", id);
-		break;
-	}
 
 	abox_request_cpu_gear_dai(dev, data->abox_data, rtd->cpu_dai, 12);
 	pm_runtime_put(rtd->codec->dev);

@@ -37,16 +37,12 @@ struct dsim_lcd_driver *mipi_lcd_driver = &s6e3fa7_mipi_lcd_driver;
 struct dsim_lcd_driver *mipi_lcd_driver = &td4101_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_HX8279D_GTA3XLLTE)
 struct dsim_lcd_driver *mipi_lcd_driver = &hx8279d_mipi_lcd_driver;
-#elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_NT36672A_M20)
-struct dsim_lcd_driver *mipi_lcd_driver = &nt36672a_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_HX83112A_M20)
 struct dsim_lcd_driver *mipi_lcd_driver = &hx83112a_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_EA8076_M30)
 struct dsim_lcd_driver *mipi_lcd_driver = &ea8076_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_EA8076_A30)
 struct dsim_lcd_driver *mipi_lcd_driver = &ea8076_mipi_lcd_driver;
-#elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_S6E3AA2_A40)
-struct dsim_lcd_driver *mipi_lcd_driver = &s6e3aa2_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_HX8279D_WISDOM)
 struct dsim_lcd_driver *mipi_lcd_driver = &hx8279d_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_S6E8FC0_A20)
@@ -63,6 +59,8 @@ struct dsim_lcd_driver *mipi_lcd_driver = &hx83102d_mipi_lcd_driver;
 struct dsim_lcd_driver *mipi_lcd_driver = &s6d7aa0_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_S6E8FC0_A30C)
 struct dsim_lcd_driver *mipi_lcd_driver = &s6e8fc0_mipi_lcd_driver;
+#elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_S6E8FC1_A30S)
+struct dsim_lcd_driver *mipi_lcd_driver = &s6e8fc1_mipi_lcd_driver;
 #else
 struct dsim_lcd_driver *mipi_lcd_driver = &s6e3fa3_mipi_lcd_driver;
 #endif
@@ -72,7 +70,7 @@ void dsim_register_panel(struct dsim_device *dsim)
 	dsim->panel_ops = mipi_lcd_driver;
 }
 
-int register_lcd_driver(struct dsim_lcd_driver *drv)
+int replace_lcd_driver(struct dsim_lcd_driver *drv)
 {
 	struct device_node *node;
 	int count = 0;

@@ -48,13 +48,11 @@
 
 #define S2MU205_WATER_THRESHOLD_POST_MV		(300)
 
-#define WATER_CHK_RETRY_CNT	2
-#define IS_CC_WATER(cc1, cc2)	\
-	((cc1 < S2MU205_WATER_THRESHOLD_MV) && (cc2 < S2MU205_WATER_THRESHOLD_MV))
-#define IS_CC_WATER_POST(cc1, cc2)	\
-	((cc1 > S2MU205_WATER_THRESHOLD_POST_MV) && (cc2 > S2MU205_WATER_THRESHOLD_POST_MV))
-#define IS_CC_DRY(cc1, cc2)	\
-	((cc1 > S2MU205_WATER_DRY_THRESHOLD_MV) && (cc2 > S2MU205_WATER_DRY_THRESHOLD_MV))
+#define WATER_CHK_RETRY_CNT		2
+#define IS_CC_WATER(cc1, cc2)		((cc1 != USBPD_Rp) && (cc2 != USBPD_Rp))
+#define IS_CC_POST_WATER(cc1, cc2)	((cc1 != USBPD_Ra) && (cc2 != USBPD_Ra))
+#define IS_CC_DRY(cc1, cc2)		((cc1 == USBPD_Rp) && (cc2 == USBPD_Rp))
+#define IS_CC_POST_DRY(cc1, cc2)	((cc1 == USBPD_Ra) && (cc2 == USBPD_Ra))
 
 /*****************************************/
 /***********DEFINITION REGISTER***********/
@@ -326,7 +324,11 @@
 #define S2MU205_REG_INT_STATUS5_HARD_RESET     (1<<2)
 
 /* interrupt for checking message */
-#define ENABLED_INT_0	(S2MU205_REG_INT_STATUS0_MSG_ACCEPT)
+#define ENABLED_INT_0	(S2MU205_REG_INT_STATUS0_MSG_ACCEPT |\
+			S2MU205_REG_INT_STATUS0_VDM_DISCOVER_MODE |\
+			S2MU205_REG_INT_STATUS0_VDM_ENTER |\
+			S2MU205_REG_INT_STATUS0_VDM_DISCOVER_ID |\
+			S2MU205_REG_INT_STATUS0_VDM_DISCOVER_SVID)
 #define ENABLED_INT_1	(S2MU205_REG_INT_STATUS1_MSG_DR_SWAP |\
 			S2MU205_REG_INT_STATUS1_MSG_PR_SWAP |\
 			S2MU205_REG_INT_STATUS1_MSG_GETSRCCAP |\
@@ -570,20 +572,6 @@ typedef enum {
 } CCIC_DETACH_TYPE;
 
 typedef enum {
-	PLUG_CTRL_RP0 = 0,
-	PLUG_CTRL_RP80 = 1,
-	PLUG_CTRL_RP180 = 2,
-	PLUG_CTRL_RP330 = 3
-} CCIC_RP_SCR_SEL;
-
-typedef enum {
-	TYPE_C_DETACH = 0,
-	TYPE_C_ATTACH_DFP = 1, /* Host */
-	TYPE_C_ATTACH_UFP = 2, /* Device */
-	TYPE_C_ATTACH_DRP = 3, /* Dual role */
-} CCIC_OTP_MODE;
-
-typedef enum {
 	PLUG_CTRL_RD = 0,
 	PLUG_CTRL_RP = 1,
 } CCIC_RP_RD_SEL;
@@ -618,6 +606,8 @@ struct s2mu205_usbpd_data {
 	struct mutex poll_mutex;
 	struct mutex lpm_mutex;
 	struct mutex cc_mutex;
+	struct mutex water_mutex;
+	const char *name;
 	int vconn_en;
 	int regulator_en;
 	int irq_gpio;
@@ -648,6 +638,8 @@ struct s2mu205_usbpd_data {
 	int is_host;
 	int is_client;
 	int is_attached;
+	u8 rp_threshold;
+	u8 rd_threshold;
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
 	struct dual_role_phy_instance *dual_role;
 	struct dual_role_phy_desc *desc;
@@ -675,12 +667,11 @@ struct s2mu205_usbpd_data {
 	struct delayed_work water_detect_handler;
 	struct delayed_work ta_water_detect_handler;
 	struct delayed_work water_dry_handler;
-	int pm_cc1;
-	int pm_cc2;
 	struct power_supply_desc ccic_desc;
 	struct power_supply *psy_pm;
 	struct power_supply *psy_ccic;
-
+	int cc1_val;
+	int cc2_val;
 	struct regulator *regulator;
 };
 
@@ -688,6 +679,9 @@ extern int s2mu205_usbpd_get_adc(void);
 extern void s2mu205_usbpd_set_muic_type(int type);
 #if defined(CONFIG_CCIC_NOTIFIER)
 extern void s2mu205_control_option_command(struct s2mu205_usbpd_data *usbpd_data, int cmd);
+#endif
+#if defined(CONFIG_SEC_FACTORY)
+extern int s2mu205_power_off_water_check(struct s2mu205_usbpd_data *pdic_data);
 #endif
 extern void s2mu205_rprd_mode_change(struct s2mu205_usbpd_data *usbpd_data, u8 mode);
 extern void vbus_turn_on_ctrl(struct s2mu205_usbpd_data *usbpd_data, bool enable);

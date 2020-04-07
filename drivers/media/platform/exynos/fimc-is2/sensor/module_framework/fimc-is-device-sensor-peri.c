@@ -1639,6 +1639,37 @@ void fimc_is_sensor_peri_probe(struct fimc_is_device_sensor_peri *sensor_peri)
 	mutex_init(&sensor_peri->cis.control_lock);
 }
 
+int sensor_module_power_reset(struct v4l2_subdev *subdev, struct fimc_is_device_sensor *device)
+{
+	int ret = 0;
+	struct fimc_is_module_enum *module;
+
+	module = (struct fimc_is_module_enum *)v4l2_get_subdevdata(subdev);
+	FIMC_BUG(!module);
+
+	ret = fimc_is_sensor_gpio_off(device);
+	if (ret)
+		err("gpio off is fail(%d)", ret);
+
+	ret = fimc_is_sensor_mclk_off(device, device->pdata->scenario, module->pdata->mclk_ch);
+	if (ret)
+		err("fimc_is_sensor_mclk_off is fail(%d)", ret);
+
+	usleep_range(10000, 10000);
+
+	ret = fimc_is_sensor_mclk_on(device, device->pdata->scenario, module->pdata->mclk_ch);
+	if (ret)
+		err("fimc_is_sensor_mclk_on is fail(%d)", ret);
+
+	ret = fimc_is_sensor_gpio_on(device);
+	if (ret)
+		err("gpio on is fail(%d)", ret);
+
+	usleep_range(10000, 10000);
+
+	return ret;
+}
+
 int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 					bool on)
 {
@@ -1653,6 +1684,7 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 	struct fimc_is_preprocessor *preprocessor = NULL;
 	struct fimc_is_core *core = NULL;
 	struct fimc_is_dual_info *dual_info = NULL;
+	int testcnt = 0;
 
 	BUG_ON(!device);
 
@@ -1757,9 +1789,43 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 		if (ret < 0) {
 			err("[%s]: sensor stream on fail\n", __func__);
 		} else {
+stream_on_retry:
 			ret = fimc_is_sensor_wait_streamon(device);
 			if (ret < 0) {
 				err("[%s]: sensor wait stream on fail\n", __func__);
+
+				/* retry stream on */
+				if ((testcnt <= 1) && (module->sensor_id == SENSOR_NAME_S5K3L6)) {
+					testcnt++;
+#ifdef ENABLE_DTP
+					if (device->dtp_check) {
+						device->dtp_check = false;
+						if (timer_pending(&device->dtp_timer))
+							del_timer_sync(&device->dtp_timer);
+					}
+#endif
+					ret = CALL_CISOPS(cis, cis_stream_off, subdev_cis);
+					ret |= fimc_is_sensor_wait_streamoff(device);
+					if(ret < 0) {
+						err("[%s]: sensor wait stream off fail\n", __func__);
+					}
+
+					ret = sensor_module_power_reset(subdev_module, device);
+					ret |= CALL_CISOPS(cis, cis_set_global_setting, subdev_cis);
+					ret |= CALL_CISOPS(cis, cis_mode_change, subdev_cis, cis->cis_data->sens_config_index_cur);
+					fimc_is_sensor_setting_mode_change(sensor_peri);
+#ifdef ENABLE_DTP
+					device->dtp_check = true;
+					mod_timer(&device->dtp_timer, jiffies +  msecs_to_jiffies(300));
+#endif
+					ret |= CALL_CISOPS(cis, cis_stream_on, subdev_cis);
+
+					if (ret < 0) {
+						err("[%s]: sensor wait stream on fail - retry fail\n", __func__);
+						goto p_err;
+					}
+					goto stream_on_retry;
+				}
 			}
 		}
 
@@ -1802,6 +1868,8 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 			memset(&sensor_peri->cis.sensor_ctls[i].cur_cam20_sensor_udctrl, 0, sizeof(camera2_sensor_uctl_t));
 			sensor_peri->cis.sensor_ctls[i].valid_sensor_ctrl = 0;
 			sensor_peri->cis.sensor_ctls[i].force_update = false;
+			memset(&sensor_peri->cis.sensor_ctls[i].cur_cam20_flash_udctrl, 0, sizeof(camera2_flash_uctl_t));
+			sensor_peri->cis.sensor_ctls[i].valid_flash_udctrl = false;
 		}
 		sensor_peri->use_sensor_work = false;
 	}
@@ -2270,18 +2338,18 @@ int fimc_is_sensor_peri_actuator_softlanding(struct fimc_is_device_sensor_peri *
 		soft_landing_table->step_delay = 200;
 		soft_landing_table->hw_table[0] = 0;
 	}
-	
-#ifdef USE_CAMERA_ACT_DRIVER_SOFT_LANDING 
+
+#ifdef USE_CAMERA_ACT_DRIVER_SOFT_LANDING
 	v4l2_ctrl.id = V4L2_CID_ACTUATOR_SOFT_LANDING;
 	ret = v4l2_subdev_call(device->subdev_actuator, core, s_ctrl, &v4l2_ctrl);
-	
+
 	if(ret != HW_SOFTLANDING_FAIL){
 		if(ret)
 			err("[SEN:%d] v4l2_subdev_call(s_ctrl, id:%d) is fail(%d)",
 				actuator->id, v4l2_ctrl.id, ret);
 		return ret;
 	}
-#endif	
+#endif
 
 	ret = fimc_is_sensor_peri_actuator_check_move_done(device);
 	if (ret) {
@@ -2310,7 +2378,7 @@ int fimc_is_sensor_peri_actuator_softlanding(struct fimc_is_device_sensor_peri *
 		actuator_itf->hw_pos = soft_landing_table->hw_table[i];
 
 		/* The actuator needs a delay time when lens moving for soft landing. */
-		msleep(soft_landing_table->step_delay);
+		mdelay(soft_landing_table->step_delay);
 
 		ret = fimc_is_sensor_peri_actuator_check_move_done(device);
 		if (ret) {

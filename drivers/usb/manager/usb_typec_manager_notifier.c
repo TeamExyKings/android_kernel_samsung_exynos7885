@@ -285,6 +285,39 @@ void manager_notifier_usbdp_support(void)
 	return;
 }
 
+static int manager_external_notifier_notification(struct notifier_block *nb,
+				unsigned long action, void *data)
+{
+	CC_NOTI_ATTACH_TYPEDEF p_batt_noti;
+	int ret = 0;
+	int enable = *(int *)data;
+
+	switch (action) {
+	case EXTERNAL_NOTIFY_DEVICEADD:
+		pr_info("%s EXTERNAL_NOTIFY_DEVICEADD, enable=%d\n", __func__, enable);
+		if (enable &&
+			typec_manager.ccic_drp_state == USB_STATUS_NOTIFY_ATTACH_DFP &&
+			typec_manager.ccic_attach_state == CCIC_NOTIFY_ATTACH &&
+			typec_manager.muic_action != MUIC_NOTIFY_CMD_DETACH) {
+			pr_info("%s: a usb device is added in host mode\n", __func__);
+			/* USB cable Type */
+			p_batt_noti.src = CCIC_NOTIFY_DEV_MANAGER;
+			p_batt_noti.dest = CCIC_NOTIFY_DEV_BATTERY;
+			p_batt_noti.id = CCIC_NOTIFY_ID_USB;
+			p_batt_noti.attach = 0;
+			p_batt_noti.rprd = 0;
+			p_batt_noti.cable_type = PD_USB_TYPE;
+			p_batt_noti.pd = NULL;
+			manager_notifier_notify(&p_batt_noti);
+		}
+		break;
+	default:
+		break;
+	}
+
+	return ret;
+}
+
 static void cable_type_check(struct work_struct *work)
 {
 	CC_NOTI_USB_STATUS_TYPEDEF p_usb_noti;
@@ -1088,6 +1121,8 @@ static int manager_notifier_init(void)
 	typec_manager.dp_is_connect = 0;
 	typec_manager.dp_hs_connect = 0;
 	typec_manager.dp_check_done = 1;
+	usb_external_notify_register(&typec_manager.manager_external_notifier_nb,
+		manager_external_notifier_notification, EXTERNAL_NOTIFY_DEV_MANAGER);
 	typec_manager.muic_attach_state_without_ccic = 0;
 #if defined(CONFIG_VBUS_NOTIFIER)
 	typec_manager.muic_fake_event_wq_processing = 0;
@@ -1166,6 +1201,7 @@ static void __exit manager_notifier_exit(void)
 #endif
 	ccic_notifier_unregister(&typec_manager.ccic_nb);
 	muic_notifier_unregister(&typec_manager.muic_nb);
+	usb_external_notify_unregister(&typec_manager.manager_external_notifier_nb);
 }
 
 late_initcall(manager_notifier_init);

@@ -332,13 +332,13 @@ static void sx9360_get_data(struct sx9360_p *data)
 	{
 		sx9360_i2c_read(data, SX9360_STAT_REG, &convstat);
 		convstat &= 0x01;
-		pr_info("[SX9360]: %s retry : %d, CONVSTAT : %u\n", __func__, retry, convstat);
 
-		if(convstat == 0 || ++retry > 5)
+		if(++retry > 5 || convstat == 0)
 			break;
 
 		usleep_range(10000, 11000);
 	}
+	pr_info("[SX9360]: %s retry : %d, CONVSTAT : %u\n", __func__, retry, convstat);
 
 	/* diff read */
 	sx9360_i2c_read(data, SX9360_REGDIFFMSBPHM, &msByte);
@@ -366,7 +366,7 @@ static void sx9360_get_data(struct sx9360_p *data)
 	lsByte = (u8)((offset)      & 0x7F);
 
 	capMain = (((s32)msByte * 30000) + ((s32)lsByte * 500)) +
-            		(((s32)useful * data->again_m) / (data->dgain_m * 32768));
+            		(s32)(((s64)useful * data->again_m) / (data->dgain_m * 32768));
 
 	/* avg read */
 	sx9360_i2c_read(data, SX9360_REGAVGMSBPHM, &msByte);
@@ -402,7 +402,7 @@ static int sx9360_set_mode(struct sx9360_p *data, unsigned char mode)
 		msleep(20);
 
 		sx9360_set_offset_calibration(data);
-		msleep(400);
+		msleep(450);
 	}
 
 	pr_info("[SX9360]: %s - change the mode : %u\n", __func__, mode);
@@ -519,7 +519,7 @@ static ssize_t sx9360_register_write_store(struct device *dev,
 	int regist = 0, val = 0;
 	struct sx9360_p *data = dev_get_drvdata(dev);
 
-	if (sscanf(buf, "%d,%d", &regist, &val) != 2) {
+	if (sscanf(buf, "%2x,%2x", &regist, &val) != 2) {
 		pr_err("[SX9360]: %s - The number of data are wrong\n",
 			__func__);
 		return -EINVAL;
@@ -532,24 +532,23 @@ static ssize_t sx9360_register_write_store(struct device *dev,
 	return count;
 }
 
-static ssize_t sx9360_register_read_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t sx9360_register_read_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
 {
-	int regist = 0;
-	unsigned char val = 0;
+	u8 val = 0;
+	int offset = 0, idx = 0;
 	struct sx9360_p *data = dev_get_drvdata(dev);
 
-	if (sscanf(buf, "%d", &regist) != 1) {
-		pr_err("[SX9360]: %s - The number of data are wrong\n",
-			__func__);
-		return -EINVAL;
+	for (idx = 0; idx < (int)(ARRAY_SIZE(setup_reg)); idx++) {
+		sx9360_i2c_read(data, setup_reg[idx].reg, &val);
+		pr_info("[SX9360]: %s - Read Reg: 0x%x Value: 0x%x\n\n",
+			__func__, setup_reg[idx].reg, val);
+
+		offset += snprintf(buf + offset, PAGE_SIZE - offset,
+		"Reg: 0x%x Value: 0x%08x\n", setup_reg[idx].reg, val);
 	}
 
-	sx9360_i2c_read(data, (unsigned char)regist, &val);
-	pr_info("[SX9360]: %s - Register(0x%2x) data(0x%2x)\n",
-		__func__, regist, val);
-
-	return count;
+	return offset;
 }
 
 static ssize_t sx9360_read_data_show(struct device *dev,
@@ -569,7 +568,7 @@ static ssize_t sx9360_sw_reset_show(struct device *dev,
 
 	pr_info("[SX9360]: %s\n", __func__);
 	sx9360_set_offset_calibration(data);
-	msleep(400);
+	msleep(450);
 	sx9360_get_data(data);
 
 	return snprintf(buf, PAGE_SIZE, "%d\n", 0);
@@ -925,9 +924,14 @@ static ssize_t sx9360_onoff_store(struct device *dev,
 		return ret;
 	}
 
-	if (val == 0)
+	if (val == 0) {
 		data->skip_data = true;
-	else
+		if (atomic_read(&data->enable) == ON) {
+			data->state = IDLE;
+			input_report_rel(data->input, REL_MISC, 2);
+			input_sync(data->input);
+		}
+	} else
 		data->skip_data = false;
 
 	pr_info("[SX9360]: %s -%u\n", __func__, val);
@@ -939,8 +943,7 @@ static DEVICE_ATTR(menual_calibrate, S_IRUGO | S_IWUSR | S_IWGRP,
 		sx9360_set_offset_calibration_store);
 static DEVICE_ATTR(register_write, S_IWUSR | S_IWGRP,
 		NULL, sx9360_register_write_store);
-static DEVICE_ATTR(register_read, S_IWUSR | S_IWGRP,
-		NULL, sx9360_register_read_store);
+static DEVICE_ATTR(register_read, S_IRUGO, sx9360_register_read_show, NULL);
 static DEVICE_ATTR(readback, S_IRUGO, sx9360_read_data_show, NULL);
 static DEVICE_ATTR(reset, S_IRUGO, sx9360_sw_reset_show, NULL);
 
@@ -1253,7 +1256,7 @@ static int sx9360_read_setupreg(struct device_node *dnode, char *str, u32 *val)
 	if (!ret)
 		*val = temp_val;
 	else
-		pr_err("[SX9330]: %s - %s: property read err 0x%08x (%d)\n",
+		pr_err("[SX9360]: %s - %s: property read err 0x%08x (%d)\n",
 			__func__, str, temp_val, ret);
 
 	return ret;
@@ -1268,10 +1271,13 @@ static int sx9360_parse_dt(struct sx9360_p *data, struct device *dev)
 	u32 reggnrlctrl2;
 	u32 regafeparam1phm;
 	u32 regproxctrl0phm;
+	u32 regproxctrl0phr;
 	u32 regproxctrl5;
 	u32 regproxctrl4;
 	u32 regproxctrl3;
 	u32 regafeparam0phm;
+	u32 regafeparam1phr;
+	u32 regafeparam0phr;
 
 	if (dNode == NULL)
 		return -ENODEV;
@@ -1289,6 +1295,8 @@ static int sx9360_parse_dt(struct sx9360_p *data, struct device *dev)
 		setup_reg[SX9360_AFE_REG_IDX + 4].val = regafeparam1phm;
 	if (!sx9360_read_setupreg(dNode, "sx9360,regproxctrl0phm", &regproxctrl0phm))
 		setup_reg[SX9360_PROXCTRL_REG_IDX + 1].val = regproxctrl0phm;
+	if (!sx9360_read_setupreg(dNode, "sx9360,regproxctrl0phr", &regproxctrl0phr))
+		setup_reg[SX9360_PROXCTRL_REG_IDX].val = regproxctrl0phr;
 	if (!sx9360_read_setupreg(dNode, "sx9360,regproxctrl5", &regproxctrl5))
 		setup_reg[SX9360_PROXCTRL_REG_IDX + 6].val = regproxctrl5;
 	if (!sx9360_read_setupreg(dNode, "sx9360,regproxctrl4", &regproxctrl4))
@@ -1297,6 +1305,10 @@ static int sx9360_parse_dt(struct sx9360_p *data, struct device *dev)
 		setup_reg[SX9360_PROXCTRL_REG_IDX + 4].val = regproxctrl3;
 	if (!sx9360_read_setupreg(dNode, "sx9360,regafeparam0phm", &regafeparam0phm))
 		setup_reg[SX9360_AFE_REG_IDX + 3].val = regafeparam0phm;
+	if (!sx9360_read_setupreg(dNode, "sx9360,regafeparam1phr", &regafeparam1phr))
+		setup_reg[SX9360_AFE_REG_IDX + 2].val = regafeparam1phr;
+	if (!sx9360_read_setupreg(dNode, "sx9360,regafeparam0phr", &regafeparam0phr))
+		setup_reg[SX9360_AFE_REG_IDX + 1].val = regafeparam0phr;
 
 	ret = of_property_read_u32(dNode, "sx9360,hallic_detect", &data->hallic_detect);
 	if (ret < 0)

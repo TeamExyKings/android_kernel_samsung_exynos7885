@@ -53,6 +53,9 @@
 /* sysfs variable for debug */
 extern struct fimc_is_sysfs_debug sysfs_debug;
 extern struct pm_qos_request exynos_isp_qos_mem;
+#ifdef CHAIN_SKIP_GFRAME_FOR_VRA
+static struct fimc_is_group_frame dummy_gframe;
+#endif
 
 static inline void smp_shot_init(struct fimc_is_group *group, u32 value)
 {
@@ -1322,8 +1325,21 @@ int fimc_is_groupmgr_init(struct fimc_is_groupmgr *groupmgr,
 			fimc_is_pipe_create(&device->pipe, next->gprev, next);
 #endif
 		} else {
-			sibling->gnext = next;
-			next->gprev = sibling;
+#ifdef CHAIN_SKIP_GFRAME_FOR_VRA
+			/**
+			 * HACK: Put VRA group as a isolated group.
+			 * There is some case that user skips queueing VRA buffer,
+			 * even though DMA out request of junction node is set.
+			 * To prevent the gframe stuck issue,
+			 * VRA group must not receive gframe from previous group.
+			 */
+			if (next->id != GROUP_ID_VRA0)
+#endif
+			{
+				sibling->gnext = next;
+				next->gprev = sibling;
+			}
+
 			sibling = next;
 		}
 
@@ -2393,7 +2409,9 @@ int fimc_is_group_buffer_queue(struct fimc_is_groupmgr *groupmgr,
 
 #ifdef SENSOR_REQUEST_DELAY
 		if (test_bit(FIMC_IS_GROUP_OTF_INPUT, &group->state) &&
-			(frame->shot->uctl.opMode == CAMERA_OP_MODE_HAL3_GED)) {
+			(frame->shot->uctl.opMode == CAMERA_OP_MODE_HAL3_GED
+			|| frame->shot->uctl.opMode == CAMERA_OP_MODE_HAL3_SDK
+			|| frame->shot->uctl.opMode == CAMERA_OP_MODE_HAL3_CAMERAX)) {
 			int req_cnt = 0;
 			struct fimc_is_frame *prev;
 			list_for_each_entry_reverse(prev, &framemgr->queued_list[FS_REQUEST], list) {
@@ -2430,7 +2448,7 @@ int fimc_is_group_buffer_queue(struct fimc_is_groupmgr *groupmgr,
 			&& (device->sensor && !test_bit(FIMC_IS_SENSOR_FRONT_START, &device->sensor->state))) {
 			device->sensor->mode_chg_frame = NULL;
 
-			if (CHK_REMOSAIC_SCN(frame->shot->ctl.aa.sceneMode)) {
+			if (CHK_REMOSAIC_SCN(frame->shot->ctl.aa.captureIntent)) {
 				clear_bit(FIMC_IS_SENSOR_OTF_OUTPUT, &device->sensor->state);
 				device->sensor->mode_chg_frame = frame;
 			} else {
@@ -2606,11 +2624,11 @@ static int fimc_is_group_check_pre(struct fimc_is_groupmgr *groupmgr,
 		/* tailer */
 		fimc_is_gframe_group_head(group, &gframe);
 		if (unlikely(!gframe)) {
-			mgrerr("gframe is NULL3", device, group, frame);
-			fimc_is_stream_status(groupmgr, group_leader);
+			mgrerr("gframe is NULL1", device, group, frame);
 			fimc_is_gframe_print_free(gframemgr);
 			fimc_is_gframe_print_group(group_leader);
 			spin_unlock_irqrestore(&gframemgr->gframe_slock, flags);
+			fimc_is_stream_status(groupmgr, group_leader);
 			ret = -EINVAL;
 			goto p_err;
 		}
@@ -2638,10 +2656,10 @@ static int fimc_is_group_check_pre(struct fimc_is_groupmgr *groupmgr,
 		fimc_is_gframe_free_head(gframemgr, &gframe);
 		if (unlikely(!gframe)) {
 			mgerr("gframe is NULL2", device, group);
-			fimc_is_stream_status(groupmgr, group_leader);
 			fimc_is_gframe_print_free(gframemgr);
 			fimc_is_gframe_print_group(group_leader);
 			spin_unlock_irqrestore(&gframemgr->gframe_slock, flags);
+			fimc_is_stream_status(groupmgr, group_leader);
 			group->fcount -= frame->num_buffers;
 			ret = -EINVAL;
 			goto p_err;
@@ -2671,10 +2689,10 @@ static int fimc_is_group_check_pre(struct fimc_is_groupmgr *groupmgr,
 		fimc_is_gframe_group_head(group, &gframe);
 		if (unlikely(!gframe)) {
 			mgrerr("gframe is NULL3", device, group, frame);
-			fimc_is_stream_status(groupmgr, group_leader);
 			fimc_is_gframe_print_free(gframemgr);
 			fimc_is_gframe_print_group(group_leader);
 			spin_unlock_irqrestore(&gframemgr->gframe_slock, flags);
+			fimc_is_stream_status(groupmgr, group_leader);
 			ret = -EINVAL;
 			goto p_err;
 		}
@@ -2693,41 +2711,60 @@ static int fimc_is_group_check_pre(struct fimc_is_groupmgr *groupmgr,
 		fimc_is_gframe_s_info(gframe, group->slot, frame);
 		fimc_is_gframe_check(gprev, group, gnext, gframe, frame);
 	} else {
-		/* single */
-		if (atomic_read(&group->scount))
-			group->fcount += frame->num_buffers;
-		else
-			group->fcount++;
+#ifdef CHAIN_SKIP_GFRAME_FOR_VRA
+		if (group->id == GROUP_ID_VRA0) {
+			/* VRA: Skip gframe logic. */
+			struct fimc_is_crop *incrop
+				= (struct fimc_is_crop *)frame->shot_ext->node_group.leader.input.cropRegion;
+			struct fimc_is_subdev *subdev = &group->leader;
 
-		fimc_is_gframe_free_head(gframemgr, &gframe);
-		if (unlikely(!gframe)) {
-			mgerr("gframe is NULL4", device, group);
-			fimc_is_stream_status(groupmgr, group_leader);
-			fimc_is_gframe_print_free(gframemgr);
-			fimc_is_gframe_print_group(group_leader);
-			spin_unlock_irqrestore(&gframemgr->gframe_slock, flags);
-			ret = -EINVAL;
-			goto p_err;
-		}
+			if ((incrop->w * incrop->h) > (subdev->input.width * subdev->input.height)) {
+				mrwarn("the input size is invalid(%dx%d > %dx%d)", group, frame,
+						incrop->w, incrop->h,
+						subdev->input.width, subdev->input.height);
+				incrop->w = subdev->input.width;
+				incrop->h = subdev->input.height;
+			}
 
-		if (unlikely(!test_bit(FIMC_IS_ISCHAIN_REPROCESSING, &device->state) &&
-			(frame->fcount != group->fcount))) {
-			if (frame->fcount > group->fcount) {
-				mgwarn("shot mismatch(%d != %d)", device, group,
-					frame->fcount, group->fcount);
-				group->fcount = frame->fcount;
-			} else {
+			gframe = &dummy_gframe;
+		} else
+#endif
+		{
+			/* single */
+			if (atomic_read(&group->scount))
+				group->fcount += frame->num_buffers;
+			else
+				group->fcount++;
+
+			fimc_is_gframe_free_head(gframemgr, &gframe);
+			if (unlikely(!gframe)) {
+				mgerr("gframe is NULL4", device, group);
+				fimc_is_gframe_print_free(gframemgr);
+				fimc_is_gframe_print_group(group_leader);
 				spin_unlock_irqrestore(&gframemgr->gframe_slock, flags);
-				mgerr("shot mismatch(%d, %d)", device, group,
-					frame->fcount, group->fcount);
-				group->fcount -= frame->num_buffers;
+				fimc_is_stream_status(groupmgr, group_leader);
 				ret = -EINVAL;
 				goto p_err;
 			}
-		}
+			if (unlikely(!test_bit(FIMC_IS_ISCHAIN_REPROCESSING, &device->state) &&
+						(frame->fcount != group->fcount))) {
+				if (frame->fcount > group->fcount) {
+					mgwarn("shot mismatch(%d != %d)", device, group,
+							frame->fcount, group->fcount);
+					group->fcount = frame->fcount;
+				} else {
+					spin_unlock_irqrestore(&gframemgr->gframe_slock, flags);
+					mgerr("shot mismatch(%d, %d)", device, group,
+							frame->fcount, group->fcount);
+					group->fcount -= frame->num_buffers;
+					ret = -EINVAL;
+					goto p_err;
+				}
+			}
 
-		fimc_is_gframe_s_info(gframe, group->slot, frame);
-		fimc_is_gframe_check(gprev, group, gnext, gframe, frame);
+			fimc_is_gframe_s_info(gframe, group->slot, frame);
+			fimc_is_gframe_check(gprev, group, gnext, gframe, frame);
+		}
 	}
 
 	*result = gframe;
@@ -2806,8 +2843,12 @@ static int fimc_is_group_check_post(struct fimc_is_groupmgr *groupmgr,
 			}
 		}
 	} else {
-		/* single */
-		gframe->fcount = frame->fcount;
+#ifdef CHAIN_SKIP_GFRAME_FOR_VRA
+		/* VRA: Skip gframe logic. */
+		if (group->id != GROUP_ID_VRA0)
+#endif
+			/* single */
+			gframe->fcount = frame->fcount;
 	}
 
 	spin_unlock_irqrestore(&gframemgr->gframe_slock, flags);

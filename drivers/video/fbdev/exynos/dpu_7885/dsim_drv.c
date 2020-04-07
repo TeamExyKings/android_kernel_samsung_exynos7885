@@ -213,7 +213,7 @@ int dsim_check_ph_threshold(struct dsim_device *dsim)
 	int cnt = 5000;
 	u32 available = 0;
 
-	available = dsim_reg_is_writable_ph_fifo_state(dsim->id);
+	available = dsim_reg_is_writable_ph_fifo_state(dsim->id, &dsim->lcd_info);
 
 	/* Wait FIFO empty status during 50ms */
 	if (!available) {
@@ -573,9 +573,9 @@ static void dsim_underrun_info(struct dsim_device *dsim)
 				decon->bts.max_disp_freq,
 				decon->bts.peak);
 		dsim_bts_print_info(&decon->bts.bts_info);
-	}
 
-	decon_abd_save_log_udr(&decon->abd, mif, iint, disp);
+		decon_abd_save_log_udr(&decon->abd, mif, iint, disp);
+	}
 #endif
 }
 

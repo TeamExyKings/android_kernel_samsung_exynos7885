@@ -18,15 +18,15 @@
 #include <linux/reboot.h>
 #include <linux/debugfs.h>
 
-#include "decon.h"
-#include "dsim.h"
-#include "dpp.h"
 #include "../../../../../kernel/irq/internals.h"
-#include "decon_notify.h"
+#include "decon.h"
 #include "decon_board.h"
+#include "decon_notify.h"
+#include "dpp.h"
+#include "dsim.h"
 
-#define abd_printf(m, x...)	\
-{	if (m) seq_printf(m, x); else decon_info(x);	}	\
+#define abd_printf(m, ...)	\
+{	if (m) seq_printf(m, __VA_ARGS__); else decon_info(__VA_ARGS__);	}	\
 
 void decon_abd_save_log_event(struct abd_protect *abd, const char *print)
 {
@@ -34,6 +34,57 @@ void decon_abd_save_log_event(struct abd_protect *abd, const char *print)
 
 	abd->event.log[idx].stamp = local_clock();
 	abd->event.log[idx].print = print;
+}
+
+static void _decon_abd_bit_print(struct seq_file *m, struct abd_log *log)
+{
+	struct timeval tv;
+	unsigned int bit = 0;
+	char print_buf[200] = {0, };
+	struct seq_file p = {
+		.buf = print_buf,
+		.size = sizeof(print_buf) - 1,
+	};
+
+	if (!m)
+		seq_puts(&p, "decon_abd: ");
+
+	tv = ns_to_timeval(log->stamp);
+	seq_printf(&p, "time: %lu.%06lu, 0x%0*X, ", (unsigned long)tv.tv_sec, tv.tv_usec, log->size >> 2, log->value);
+
+	for (bit = 0; bit < log->size; bit++) {
+		if (log->print[bit]) {
+			if (!bit || !log->print[bit - 1] || strcmp(log->print[bit - 1], log->print[bit]))
+				seq_printf(&p, "%s, ", log->print[bit]);
+		}
+	}
+
+	abd_printf(m, "%s\n", p.count ? p.buf : "");
+}
+
+void decon_abd_save_log_bit(struct abd_protect *abd, unsigned int size, unsigned int value, char **print)
+{
+	struct abd_trace *first = &abd->b_first;
+	struct abd_trace *event = &abd->b_event;
+
+	struct abd_log *first_log = &first->log[(first->count % ABD_LOG_MAX)];
+	struct abd_log *event_log = &event->log[(event->count % ABD_LOG_MAX)];
+
+	memset(event_log, 0, sizeof(struct abd_log));
+	event_log->stamp = ktime_to_ns(ktime_get());
+	event_log->value = value;
+	event_log->size = size;
+	memcpy(&event_log->print, print, sizeof(char *) * size);
+
+	if (!first->count) {
+		memset(first_log, 0, sizeof(struct abd_log));
+		memcpy(first_log, event_log, sizeof(struct abd_log));
+		first->count++;
+	}
+
+	_decon_abd_bit_print(NULL, event_log);
+
+	event->count++;
 }
 
 void decon_abd_save_log_fto(struct abd_protect *abd, struct sync_fence *fence)
@@ -269,14 +320,14 @@ int decon_abd_register_pin_handler(int irq, irq_handler_t handler, void *dev_id)
 	return 0;
 }
 
-static int decon_debug_pin_log_print(struct seq_file *m, struct abd_trace *trace)
+static void decon_abd_pin_log_print(struct seq_file *m, struct abd_trace *trace)
 {
 	struct timeval tv;
 	struct abd_log *log;
 	unsigned int i = 0;
 
 	if (!trace->count)
-		return 0;
+		return;
 
 	abd_printf(m, "%s total count: %d\n", trace->name, trace->count);
 	for (i = 0; i < ABD_LOG_MAX; i++) {
@@ -287,25 +338,21 @@ static int decon_debug_pin_log_print(struct seq_file *m, struct abd_trace *trace
 		abd_printf(m, "time: %lu.%06lu level: %d onoff: %d state: %d\n",
 			(unsigned long)tv.tv_sec, tv.tv_usec, log->level, log->onoff, log->state);
 	}
-
-	return 0;
 }
 
-static int decon_debug_pin_print(struct seq_file *m, struct abd_pin *pin)
+static void decon_abd_pin_print(struct seq_file *m, struct abd_pin *pin)
 {
 	if (!pin->irq)
-		return 0;
+		return;
 
 	if (!pin->p_first.count)
-		return 0;
+		return;
 
 	abd_printf(m, "[%s]\n", pin->name);
 
-	decon_debug_pin_log_print(m, &pin->p_first);
-	decon_debug_pin_log_print(m, &pin->p_lcdon);
-	decon_debug_pin_log_print(m, &pin->p_event);
-
-	return 0;
+	decon_abd_pin_log_print(m, &pin->p_first);
+	decon_abd_pin_log_print(m, &pin->p_lcdon);
+	decon_abd_pin_log_print(m, &pin->p_event);
 }
 
 static const char *sync_status_str(int status)
@@ -319,14 +366,14 @@ static const char *sync_status_str(int status)
 	return "error";
 }
 
-static int decon_debug_fto_print(struct seq_file *m, struct abd_trace *trace)
+static void decon_abd_fto_print(struct seq_file *m, struct abd_trace *trace)
 {
 	struct timeval tv;
 	struct abd_log *log;
 	unsigned int i = 0;
 
 	if (!trace->count)
-		return 0;
+		return;
 
 	abd_printf(m, "%s total count: %d\n", trace->name, trace->count);
 	for (i = 0; i < ABD_LOG_MAX; i++) {
@@ -337,11 +384,9 @@ static int decon_debug_fto_print(struct seq_file *m, struct abd_trace *trace)
 		abd_printf(m, "time: %lu.%06lu, %d, %s: %s\n",
 			(unsigned long)tv.tv_sec, tv.tv_usec, log->winid, log->fence.name, sync_status_str(atomic_read(&log->fence.status)));
 	}
-
-	return 0;
 }
 
-static int decon_debug_udr_print(struct seq_file *m, struct abd_trace *trace)
+static void decon_abd_udr_print(struct seq_file *m, struct abd_trace *trace)
 {
 	struct timeval tv;
 	struct abd_log *log;
@@ -350,7 +395,7 @@ static int decon_debug_udr_print(struct seq_file *m, struct abd_trace *trace)
 	unsigned int i = 0, idx;
 
 	if (!trace->count)
-		return 0;
+		return;
 
 	abd_printf(m, "%s total count: %d\n", trace->name, trace->count);
 	for (i = 0; i < ABD_LOG_MAX; i++) {
@@ -363,8 +408,8 @@ static int decon_debug_udr_print(struct seq_file *m, struct abd_trace *trace)
 
 		abd_printf(m, "MIF(%lu), INT(%lu), DISP(%lu)\n", log->mif, log->iint, log->disp);
 
-		bts = &log->bts;
-		bts_info = &log->bts.bts_info;
+		bts = (struct decon_bts *)&log->bts;
+		bts_info = &bts->bts_info;
 		abd_printf(m, "total(%u %u), max(%u %u), peak(%u)\n",
 				bts->prev_total_bw,
 				bts->total_bw,
@@ -383,11 +428,9 @@ static int decon_debug_udr_print(struct seq_file *m, struct abd_trace *trace)
 				bts_info->dpp[idx].dst.y1, bts_info->dpp[idx].dst.y2);
 		}
 	}
-
-	return 0;
 }
 
-static int decon_debug_ss_log_print(struct seq_file *m)
+static void decon_abd_ss_log_print(struct seq_file *m)
 {
 	unsigned int log_max = 200, i, idx;
 	struct timeval tv;
@@ -410,11 +453,9 @@ static int decon_debug_ss_log_print(struct seq_file *m)
 	}
 
 	abd_printf(m, "\n");
-
-	return 0;
 }
 
-static int decon_debug_event_log_print(struct seq_file *m)
+static void decon_abd_event_log_print(struct seq_file *m)
 {
 	unsigned int log_max = ABD_EVENT_LOG_MAX, i, idx;
 	struct timeval tv;
@@ -428,7 +469,7 @@ static int decon_debug_event_log_print(struct seq_file *m)
 	};
 
 	if (start < 0)
-		return 0;
+		return;
 
 	abd_printf(m, "==========_LOG_DEBUG_==========\n");
 
@@ -450,50 +491,70 @@ static int decon_debug_event_log_print(struct seq_file *m)
 	}
 
 	abd_printf(m, "%s\n", p.count ? p.buf : "");
-
-	return 0;
 }
 
-static int decon_debug_show(struct seq_file *m, void *unused)
+static void decon_abd_bit_print(struct seq_file *m, struct abd_trace *trace)
+{
+	struct abd_log *log;
+	unsigned int i = 0;
+
+	if (!trace->count)
+		return;
+
+	abd_printf(m, "%s total count: %d\n", trace->name, trace->count);
+	for (i = 0; i < ABD_LOG_MAX; i++) {
+		log = &trace->log[i];
+		if (!log->stamp)
+			continue;
+		_decon_abd_bit_print(m, log);
+	}
+}
+
+static int decon_abd_show(struct seq_file *m, void *unused)
 {
 	struct decon_device *decon = m ? m->private : get_decon_drvdata(0);
 	struct abd_protect *abd = &decon->abd;
 	struct dsim_device *dsim = v4l2_get_subdevdata(decon->out_sd[0]);
 	unsigned int i = 0;
 
-	abd_printf(m, "==========_LCD_DEBUG_==========\n");
+	abd_printf(m, "==========_DECON_ABD_==========\n");
 	abd_printf(m, "isync: %d, lcdconnected: %d\n", decon->ignore_vsync, dsim->priv.lcdconnected);
+	abd_printf(m, "==========_PIN_DEBUG_==========\n");
 	for (i = 0; i < ABD_PIN_MAX; i++)
-		decon_debug_pin_print(m, &abd->pin[i]);
+		decon_abd_pin_print(m, &abd->pin[i]);
+
+	abd_printf(m, "==========_BIT_DEBUG_==========\n");
+	decon_abd_bit_print(m, &abd->b_first);
+	decon_abd_bit_print(m, &abd->b_event);
 
 	abd_printf(m, "==========_FTO_DEBUG_==========\n");
-	decon_debug_fto_print(m, &abd->f_first);
-	decon_debug_fto_print(m, &abd->f_lcdon);
-	decon_debug_fto_print(m, &abd->f_event);
+	decon_abd_fto_print(m, &abd->f_first);
+	decon_abd_fto_print(m, &abd->f_lcdon);
+	decon_abd_fto_print(m, &abd->f_event);
 
 	abd_printf(m, "==========_UDR_DEBUG_==========\n");
-	decon_debug_udr_print(m, &abd->u_first);
-	decon_debug_udr_print(m, &abd->u_lcdon);
-	decon_debug_udr_print(m, &abd->u_event);
+	decon_abd_udr_print(m, &abd->u_first);
+	decon_abd_udr_print(m, &abd->u_lcdon);
+	decon_abd_udr_print(m, &abd->u_event);
 
 	abd_printf(m, "==========_RAM_DEBUG_==========\n");
-	decon_debug_ss_log_print(m);
+	decon_abd_ss_log_print(m);
 
-	decon_debug_event_log_print(m);
+	decon_abd_event_log_print(m);
 
 	return 0;
 }
 
-static int decon_debug_open(struct inode *inode, struct file *file)
+static int decon_abd_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, decon_debug_show, inode->i_private);
+	return single_open(file, decon_abd_show, inode->i_private);
 }
 
-static const struct file_operations decon_debug_fops = {
+static const struct file_operations decon_abd_fops = {
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = seq_release,
-	.open = decon_debug_open,
+	.open = decon_abd_open,
 };
 
 static int decon_abd_reboot_notifier(struct notifier_block *this,
@@ -510,17 +571,20 @@ static int decon_abd_reboot_notifier(struct notifier_block *this,
 
 	abd_printf(NULL, "isync: %d, lcdconnected: %d\n", decon->ignore_vsync, dsim->priv.lcdconnected);
 	for (i = 0; i < ABD_PIN_MAX; i++)
-		decon_debug_pin_print(NULL, &abd->pin[i]);
+		decon_abd_pin_print(NULL, &abd->pin[i]);
 
-	decon_debug_fto_print(NULL, &abd->f_first);
-	decon_debug_fto_print(NULL, &abd->f_lcdon);
-	decon_debug_fto_print(NULL, &abd->f_event);
+	decon_abd_bit_print(NULL, &abd->b_first);
+	decon_abd_bit_print(NULL, &abd->b_event);
 
-	decon_debug_udr_print(NULL, &abd->u_first);
-	decon_debug_udr_print(NULL, &abd->u_lcdon);
-	decon_debug_udr_print(NULL, &abd->u_event);
+	decon_abd_fto_print(NULL, &abd->f_first);
+	decon_abd_fto_print(NULL, &abd->f_lcdon);
+	decon_abd_fto_print(NULL, &abd->f_event);
 
-	decon_debug_event_log_print(NULL);
+	decon_abd_udr_print(NULL, &abd->u_first);
+	decon_abd_udr_print(NULL, &abd->u_lcdon);
+	decon_abd_udr_print(NULL, &abd->u_event);
+
+	decon_abd_event_log_print(NULL);
 
 	decon_info("-- %s: %lu\n",  __func__, code);
 
@@ -688,16 +752,17 @@ static int decon_abd_con_fb_notifier_callback(struct notifier_block *this,
 
 	if (fb_blank == FB_BLANK_UNBLANK && event == FB_EARLY_EVENT_BLANK) {
 		int gpio_active = of_gpio_get_active("gpio_con");
+
 		flush_workqueue(abd->con_workqueue);
 		decon_info("%s: %s\n", __func__, gpio_active ? "disconnected" : "connected");
 		if (gpio_active) {
 			evdata->info->fbops->fb_blank = NULL;
 			return NOTIFY_STOP_MASK;
-		} else {
-			evdata->info->fbops->fb_blank = decon->abd.decon_fbops.fb_blank;
-			decon->ignore_vsync = 0;
-			decon_info("%s: ignore_vsync: %d\n", __func__, decon->ignore_vsync);
 		}
+
+		evdata->info->fbops->fb_blank = decon->abd.decon_fbops.fb_blank;
+		decon->ignore_vsync = 0;
+		decon_info("%s: ignore_vsync: %d\n", __func__, decon->ignore_vsync);
 	}
 
 	return NOTIFY_DONE;
@@ -764,7 +829,7 @@ exit:
 	return ret;
 }
 
-static int decon_abd_con_register(struct decon_device *decon)
+int decon_abd_con_register(struct decon_device *decon)
 {
 	if (!IS_ENABLED(CONFIG_SEC_FACTORY))
 		goto exit;
@@ -794,35 +859,39 @@ exit:
 
 int decon_abd_register(struct decon_device *decon)
 {
-	int ret = 0;
+	int ret = 0, i;
 	struct abd_protect *abd = &decon->abd;
 
 	decon_info("%s: ++\n", __func__);
 
 	atomic_set(&decon->abd.event.log_idx, -1);
 
-	abd->u_first.name = abd->f_first.name = "first";
+	abd->u_first.name = abd->f_first.name = abd->b_first.name = "first";
 	abd->u_lcdon.name = abd->f_lcdon.name = "lcdon";
-	abd->u_event.name = abd->f_event.name = "event";
+	abd->u_event.name = abd->f_event.name = abd->b_event.name = "event";
 
 	spin_lock_init(&decon->abd.slock);
 
-	ret += decon_abd_register_function(decon, &abd->pin[ABD_PIN_PCD], "pcd", decon_abd_handler);
-	ret += decon_abd_register_function(decon, &abd->pin[ABD_PIN_DET], "det", decon_abd_handler);
-	ret += decon_abd_register_function(decon, &abd->pin[ABD_PIN_ERR], "err", decon_abd_handler);
-	ret += decon_abd_register_function(decon, &abd->pin[ABD_PIN_CON], "con", decon_abd_handler);
+	ret |= decon_abd_register_function(decon, &abd->pin[ABD_PIN_PCD], "pcd", decon_abd_handler);
+	ret |= decon_abd_register_function(decon, &abd->pin[ABD_PIN_DET], "det", decon_abd_handler);
+	ret |= decon_abd_register_function(decon, &abd->pin[ABD_PIN_ERR], "err", decon_abd_handler);
+	ret |= decon_abd_register_function(decon, &abd->pin[ABD_PIN_CON], "con", decon_abd_handler);
+
+	for (i = 0; i < ABD_LOG_MAX; i++) {
+		abd->u_first.log[i].bts = kzalloc(sizeof(struct decon_bts), GFP_KERNEL);
+		abd->u_lcdon.log[i].bts = kzalloc(sizeof(struct decon_bts), GFP_KERNEL);
+		abd->u_event.log[i].bts = kzalloc(sizeof(struct decon_bts), GFP_KERNEL);
+	}
 
 	if (ret < 0)
 		goto exit;
 
-	debugfs_create_file("debug", 0444, decon->d.debug_root, decon, &decon_debug_fops);
+	debugfs_create_file("debug", 0444, decon->d.debug_root, decon, &decon_abd_fops);
 
 	abd->reboot_notifier.notifier_call = decon_abd_reboot_notifier;
 	register_reboot_notifier(&abd->reboot_notifier);
 exit:
 	decon_info("%s: -- %d entity was registered\n", __func__, ret);
-
-	decon_abd_con_register(decon);
 
 	return ret;
 }

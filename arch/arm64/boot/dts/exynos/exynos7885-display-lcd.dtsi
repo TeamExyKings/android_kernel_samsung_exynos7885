@@ -108,6 +108,7 @@
 		timing,dsi-hs-clk = <997>;
 		timing,pms = <3 230 1>;
 		timing,dsi-escape-clk = <16>;
+		update_min = <360 222>;
 		mic_en = <0>;		/* 0: Disable, 1: Enable */
 		mic_ratio = <0>;	/* 0: 1/2 mic, 1: 1/3 mic */
 		mic_ver = <0>;		/* 0: mic v1.1, 1: v1.2, 2: v2.0 */
@@ -345,6 +346,7 @@
 		timing,dsi-hs-clk = <1100>;
 		timing,pms = <3 127 0>;
 		timing,dsi-escape-clk = <16>;
+		update_min = <1080 2>;
 		mic_en = <0>;		/* 0: Disable, 1: Enable */
 		mic_ratio = <0>;	/* 0: 1/2 mic, 1: 1/3 mic */
 		mic_ver = <0>;		/* 0: mic v1.1, 1: v1.2, 2: v2.0 */

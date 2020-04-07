@@ -792,3 +792,117 @@ exit:
 	return ret;
 }
 
+/**
+ * of_update_phandle_property - update a phandle property to a device_node pointer
+ * @phandle_name: to. Name of property holding a phandle value which will be updated
+ * @node_name: from. Name of node which has new phandle value
+ *
+ * Example:
+ *
+ * phandle1: node1 {
+ * }
+ *
+ * phandle2: node2 {
+ * }
+ *
+ * node3 {
+ *	phandle_name = <&phandle1>;
+ * }
+ *
+ * To change a device_node using phandle_name like below:
+ *	phandle_name = <&phandle2>;
+ *
+ * you may call this:
+ * of_update_phandle_property("phandle_name", "node2");
+ */
+int of_update_phandle_property(const char *phandle_name, const char *node_name)
+{
+	struct device_node *parent = NULL, *node_new = NULL, *node = NULL;
+	struct property *prop_org, *prop_new;
+	int len = 0, ret = 0;
+	__be32 *pphandle_new = NULL;
+	const __be32 *pphandle_org;
+	phandle phandle_org = 0;
+
+	parent = of_find_node_with_property(NULL, phandle_name);
+	if (!parent) {
+		bd_info("of_find_node_with_property fail with %s\n", phandle_name);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	len = of_count_phandle_with_args(parent, phandle_name, NULL);
+	if (len != 1) {
+		bd_info("of_count_phandle_with_args fail, count: %d\n", len);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	pphandle_org = of_get_property(parent, phandle_name, &len);
+	if (!pphandle_org) {
+		bd_info("of_get_property fail with %s, len(%d)\n", phandle_name, len);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	phandle_org = be32_to_cpup(pphandle_org);
+	if (!phandle_org) {
+		bd_info("%s property has invalid phandle(%d)\n", phandle_name, phandle_org);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	node = of_find_node_by_phandle(phandle_org);
+	if (!node) {
+		bd_info("of_find_node_by_phandle fail with %s(%d)\n", phandle_name, phandle_org);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	node_new = of_find_node_by_name(NULL, node_name);
+	if (!node_new) {
+		bd_info("of_find_node_by_name fail with %s\n", node_name);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	if (!node_new->phandle) {
+		bd_info("%s node has no label for phandle\n", node_new->full_name);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	if (phandle_org == node_new->phandle) {
+		bd_info("phandle is same(%d, %d)\n", phandle_org, node_new->phandle);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	prop_org = of_find_property(parent, phandle_name, &len);
+
+	prop_new = kzalloc(sizeof(struct property), GFP_KERNEL);
+	prop_new->name = kstrdup(prop_org->name, GFP_KERNEL);
+	prop_new->value = kzalloc(prop_org->length, GFP_KERNEL);
+	prop_new->length = prop_org->length;
+
+	pphandle_new = prop_new->value;
+	*pphandle_new = be32_to_cpu(node_new->phandle);
+
+	ret = of_update_property(parent, prop_new);
+	if (ret) {
+		bd_info("of_update_property fail: %d\n", ret);
+		kfree(prop_new->value);
+		kfree(prop_new->name);
+		kfree(prop_new);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	bd_info("%s %s phandle is changed. %d(%s)->%d(%s)\n", of_node_full_name(parent), phandle_name,
+		phandle_org, of_node_full_name(of_find_node_by_phandle(phandle_org)),
+		node_new->phandle, of_node_full_name(of_parse_phandle(parent, phandle_name, 0)));
+
+exit:
+	return ret;
+}
+

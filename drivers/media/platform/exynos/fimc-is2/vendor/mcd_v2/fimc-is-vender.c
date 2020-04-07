@@ -650,21 +650,7 @@ int fimc_is_vender_fw_filp_open(struct fimc_is_vender *vender, struct file **fp,
 	core = container_of(vender, struct fimc_is_core, vender);
 	memset(fw_path, 0x00, sizeof(fw_path));
 
-	if (bin_type == FIMC_IS_BIN_FW) {
-		if (is_dumped_fw_loading_needed) {
-			snprintf(fw_path, sizeof(fw_path),
-					"%s%s", FIMC_IS_FW_DUMP_PATH, sysfs_finfo->load_fw_name);
-			*fp = filp_open(fw_path, O_RDONLY, 0);
-			if (IS_ERR_OR_NULL(*fp)) {
-				*fp = NULL;
-				ret = FW_FAIL;
-			} else {
-				ret = FW_SUCCESS;
-			}
-		} else {
-			ret = FW_SKIP;
-		}
-	} else if (bin_type == FIMC_IS_BIN_SETFILE) {
+	if (bin_type == IS_BIN_SETFILE) {
 		if (is_dumped_fw_loading_needed) {
 #ifdef CAMERA_MODULE_FRONT_SETF_DUMP
 			if (core->current_position == SENSOR_POSITION_FRONT) {
@@ -1278,6 +1264,30 @@ int fimc_is_vender_video_s_ctrl(struct v4l2_control *ctrl,
 		ctrl->id = VENDER_S_CTRL;
 		device->group_3aa.intent_ctl.vendor_captureExposureTime = ctrl->value;
 		minfo("[VENDER] s_ctrl vendor_captureExposureTime(%d)\n", device, ctrl->value);
+		break;
+	case V4L2_CID_IS_FORCE_FLASH_MODE:
+		if (device->sensor != NULL) {
+			struct v4l2_subdev *subdev_flash;
+
+			subdev_flash = device->sensor->subdev_flash;
+
+			if (subdev_flash != NULL) {
+				struct fimc_is_flash *flash = NULL;
+
+				flash = (struct fimc_is_flash *)v4l2_get_subdevdata(subdev_flash);
+				FIMC_BUG(!flash);
+
+				minfo("[VENDOR] force flash mode\n", device);
+
+				ctrl->id = V4L2_CID_FLASH_SET_FIRE;
+				if (ctrl->value == CAM2_FLASH_MODE_OFF) {
+					ctrl->value = 0; /* intensity */
+					flash->flash_data.mode = CAM2_FLASH_MODE_OFF;
+					flash->flash_data.flash_fired = false;
+					ret = v4l2_subdev_call(subdev_flash, core, s_ctrl, ctrl);
+				}
+			}
+		}
 		break;
 	case V4L2_CID_IS_CAMERA_TYPE:
 		ctrl->id = VENDER_S_CTRL;

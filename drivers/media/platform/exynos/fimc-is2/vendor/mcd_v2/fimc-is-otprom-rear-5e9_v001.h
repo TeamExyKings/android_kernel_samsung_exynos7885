@@ -10,14 +10,18 @@
 /* OEM referenced section */
 #define OTP_OEM_START_ADDR    (0xF0)			// For Check the checksum
 #define OTP_USED_CAL_SIZE     (0x1AC + 4)		// For Check the checksum
-
+#if !defined(FIMC_IS_REAR2_MAX_CAL_SIZE)
 #define FIMC_IS_REAR2_MAX_CAL_SIZE	OTP_USED_CAL_SIZE
+#endif
+#if !defined(FIMC_IS_REAR3_MAX_CAL_SIZE)
+#define FIMC_IS_REAR3_MAX_CAL_SIZE	OTP_USED_CAL_SIZE
+#endif
 
 const struct fimc_is_vender_rom_addr rear_5e9_otp_cal_addr = {
 	/* Set '-1' if not used */
 
 	'A',					//char		camera_module_es_version;
-	(1),					//u8			cal_map_es_version;
+	'1',					//u8			cal_map_es_version;
 	OTP_USED_CAL_SIZE,		//int32_t		rom_max_cal_size;
 
 	0x00,			//int32_t		rom_header_cal_data_start_addr;

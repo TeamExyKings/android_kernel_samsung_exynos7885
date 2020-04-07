@@ -23,8 +23,6 @@
 #define IMX576_PDAF_MAXHEIGHT        0        /* MAX height size */
 #define IMX576_PDAF_ELEMENT          0        /* V4L2_PIX_FMT_SBGGR16 */
 
-#define IMX576_MIPI_MAXWIDTH         5759     /* MAX width size */
-#define IMX576_MIPI_MAXHEIGHT        4279     /* MAX height size */
 #define IMX576_MIPI_ELEMENT          1        /* V4L2_PIX_FMT_SBGGR16 */
 
 enum sensor_module_imx576_actuator {

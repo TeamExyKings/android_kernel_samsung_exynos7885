@@ -271,7 +271,7 @@ static int fimc_is_hw_mcsc_open(struct fimc_is_hw_ip *hw_ip, u32 instance,
 	struct fimc_is_hardware *hardware;
 	struct fimc_is_hw_ip *hw_ip0 = NULL, *hw_ip1 = NULL;
 	u32 output_id;
-	int i;
+	int i, j;
 
 	BUG_ON(!hw_ip);
 
@@ -316,7 +316,8 @@ static int fimc_is_hw_mcsc_open(struct fimc_is_hw_ip *hw_ip, u32 instance,
 	get_mcsc_hw_ip(hardware, &hw_ip0, &hw_ip1);
 
 	for (i = 0; i < SENSOR_POSITION_MAX; i++) {
-		hw_mcsc->applied_setfile[i] = NULL;
+		for (j = 0; j < FIMC_IS_STREAM_COUNT; j++)
+			hw_mcsc->applied_setfile[i][j] = NULL;
 	}
 
 	if (cap->enable_shared_output) {
@@ -761,7 +762,7 @@ static int fimc_is_hw_mcsc_shot(struct fimc_is_hw_ip *hw_ip, struct fimc_is_fram
 	struct is_param_region *param;
 	struct mcs_param *mcs_param;
 	bool start_flag = true;
-	u32 lindex, hindex, instance;
+	u32 instance;
 	struct fimc_is_hw_mcsc_cap *cap = GET_MCSC_HW_CAP(hw_ip);
 
 	BUG_ON(!hw_ip);
@@ -815,43 +816,9 @@ static int fimc_is_hw_mcsc_shot(struct fimc_is_hw_ip *hw_ip, struct fimc_is_fram
 		msdbg_hw(2, "request not exist\n", instance, hw_ip);
 		hw_ip->internal_fcount = frame->fcount;
 		goto config;
-	} else {
-		BUG_ON(!frame->shot);
-		/* per-frame control
-		 * check & update size from region
-		 */
-		lindex = frame->shot->ctl.vendor_entry.lowIndexParam;
-		hindex = frame->shot->ctl.vendor_entry.highIndexParam;
-
-		/* if internal -> normat shot case
-		 * lindex/hindex set for update register forcely
-		 */
-		if (hw_ip->internal_fcount != 0) {
-			hw_ip->internal_fcount = 0;
-			lindex |= LOWBIT_OF(PARAM_MCS_INPUT);
-			lindex |= LOWBIT_OF(PARAM_MCS_OUTPUT0);
-			lindex |= LOWBIT_OF(PARAM_MCS_OUTPUT1);
-			lindex |= LOWBIT_OF(PARAM_MCS_OUTPUT2);
-			lindex |= LOWBIT_OF(PARAM_MCS_OUTPUT3);
-			lindex |= LOWBIT_OF(PARAM_MCS_OUTPUT4);
-
-			hindex |= HIGHBIT_OF(PARAM_MCS_INPUT);
-			hindex |= HIGHBIT_OF(PARAM_MCS_OUTPUT0);
-			hindex |= HIGHBIT_OF(PARAM_MCS_OUTPUT1);
-			hindex |= HIGHBIT_OF(PARAM_MCS_OUTPUT2);
-			hindex |= HIGHBIT_OF(PARAM_MCS_OUTPUT3);
-			hindex |= HIGHBIT_OF(PARAM_MCS_OUTPUT4);
-		}
 	}
 
-#ifdef ENABLE_FULLCHAIN_OVERFLOW_RECOVERY
-	hw_mcsc->back_param = param;
-	hw_mcsc->back_lindex = lindex;
-	hw_mcsc->back_hindex = hindex;
-#endif
-
-	fimc_is_hw_mcsc_update_param(hw_ip, mcs_param,
-		lindex, hindex, instance);
+	fimc_is_hw_mcsc_update_param(hw_ip, mcs_param, instance);
 
 	msdbg_hw(2, "[F:%d]shot [T:%d]\n", instance, hw_ip, frame->fcount, frame->type);
 
@@ -995,11 +962,10 @@ int fimc_is_hw_mcsc_update_register(struct fimc_is_hw_ip *hw_ip,
 }
 
 int fimc_is_hw_mcsc_update_param(struct fimc_is_hw_ip *hw_ip,
-	struct mcs_param *param, u32 lindex, u32 hindex, u32 instance)
+	struct mcs_param *param, u32 instance)
 {
 	int i = 0;
 	int ret = 0;
-	bool control_cmd = false;
 	struct fimc_is_hw_mcsc *hw_mcsc;
 	u32 hwfc_output_ids = 0;
 	struct fimc_is_hw_mcsc_cap *cap = GET_MCSC_HW_CAP(hw_ip);
@@ -1011,36 +977,27 @@ int fimc_is_hw_mcsc_update_param(struct fimc_is_hw_ip *hw_ip,
 	hw_mcsc = (struct fimc_is_hw_mcsc *)hw_ip->priv_info;
 
 	if (hw_mcsc->instance != instance) {
-		control_cmd = true;
-		msdbg_hw(2, "update_param: hw_ip->instance(%d), control_cmd(%d)\n",
-			instance, hw_ip, hw_mcsc->instance, control_cmd);
+		msdbg_hw(2, "update_param: hw_ip->instance(%d)\n",
+			instance, hw_ip, hw_mcsc->instance);
 	}
 
-	if (control_cmd || (lindex & LOWBIT_OF(PARAM_MCS_INPUT))
-		|| (hindex & HIGHBIT_OF(PARAM_MCS_INPUT))
-		|| (test_bit(HW_MCSC_OUT_CLEARED_ALL, &hw_mcsc_out_configured))) {
-		ret = fimc_is_hw_mcsc_otf_input(hw_ip, &param->input, instance);
-		ret = fimc_is_hw_mcsc_dma_input(hw_ip, &param->input, instance);
-	}
+	ret |= fimc_is_hw_mcsc_otf_input(hw_ip, &param->input, instance);
+	ret |= fimc_is_hw_mcsc_dma_input(hw_ip, &param->input, instance);
 
 	if (cap->djag == MCSC_CAP_SUPPORT)
 		fimc_is_hw_mcsc_update_djag_register(hw_ip, param, instance);	/* for DZoom */
 
 	for (i = MCSC_OUTPUT0; i < cap->max_output; i++) {
-		if (control_cmd || (lindex & LOWBIT_OF((i + PARAM_MCS_OUTPUT0)))
-				|| (hindex & HIGHBIT_OF((i + PARAM_MCS_OUTPUT0)))
-				|| (test_bit(HW_MCSC_OUT_CLEARED_ALL, &hw_mcsc_out_configured))) {
-			ret = fimc_is_hw_mcsc_update_register(hw_ip, param, i, instance);
-			fimc_is_scaler_set_wdma_pri(hw_ip->regs, i, param->output[i].plane);	/* FIXME: */
+		ret |= fimc_is_hw_mcsc_update_register(hw_ip, param, i, instance);
+		fimc_is_scaler_set_wdma_pri(hw_ip->regs, i, param->output[i].plane);	/* FIXME: */
 
-		}
 			/* check the hwfc enable in all output */
 			if (param->output[i].hwfc)
 				hwfc_output_ids |= (1 << i);
 		}
 
 	/* setting for hwfc */
-	ret = fimc_is_hw_mcsc_hwfc_mode(hw_ip, &param->input, hwfc_output_ids, instance);
+	ret |= fimc_is_hw_mcsc_hwfc_mode(hw_ip, &param->input, hwfc_output_ids, instance);
 
 	if (ret)
 		fimc_is_hw_mcsc_size_dump(hw_ip);
@@ -1259,7 +1216,7 @@ static int fimc_is_hw_mcsc_apply_setfile(struct fimc_is_hw_ip *hw_ip, u32 scenar
 		return -ENOMEM;
 	}
 
-	hw_mcsc->applied_setfile[sensor_position] =
+	hw_mcsc->applied_setfile[sensor_position][instance] =
 		&hw_mcsc->setfile[sensor_position][setfile_index];
 
 	if (cap->djag) {
@@ -2089,7 +2046,7 @@ int fimc_is_hw_mcsc_output_yuvrange(struct fimc_is_hw_ip *hw_ip, struct param_mc
 	if (test_bit(HW_TUNESET, &hw_ip->state)) {
 		/* set yuv range config value by scaler_param yuv_range mode */
 		sensor_position = hw_ip->hardware->sensor_position[instance];
-		contents = hw_mcsc->applied_setfile[sensor_position]->contents[yuv_range];
+		contents = hw_mcsc->applied_setfile[sensor_position][instance]->contents[yuv_range];
 		fimc_is_scaler_set_b_c(hw_ip->regs, output_id,
 			contents.y_offset, contents.y_gain);
 		fimc_is_scaler_set_h_s(hw_ip->regs, output_id,
@@ -2514,7 +2471,7 @@ int fimc_is_hw_mcsc_update_djag_register(struct fimc_is_hw_ip *hw_ip,
 	fimc_is_scaler_set_djag_round_mode(hw_ip->regs, 1);
 
 #ifdef MCSC_USE_DEJAG_TUNING_PARAM
-	djag_tuneset = hw_mcsc->applied_setfile[sensor_position]->djag_contents[scale_index];
+	djag_tuneset = hw_mcsc->applied_setfile[sensor_position][instance]->djag_contents[scale_index];
 #endif
 	fimc_is_scaler_set_djag_tunning_param(hw_ip->regs, djag_tuneset);
 

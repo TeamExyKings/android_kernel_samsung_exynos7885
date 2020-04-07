@@ -75,13 +75,18 @@
 #define SEC_BAT_CURRENT_EVENT_VBAT_OVP			0x1000
 #define SEC_BAT_CURRENT_EVENT_VSYS_OVP			0x2000
 #define SEC_BAT_CURRENT_EVENT_WPC_VOUT_LOCK		0x4000
+#define SEC_BAT_CURRENT_EVENT_HV_DISABLE		0x10000
 #define SEC_BAT_CURRENT_EVENT_SELECT_PDO		0x20000
 
 #define SIOP_EVENT_NONE 	0x0000
 #define SIOP_EVENT_WPC_CALL 	0x0001
 
 #if defined(CONFIG_SEC_FACTORY)			/* SEC_FACTORY */
+#if defined(CONFIG_A10_FACTORY_MAX_SOC)
+#define STORE_MODE_CHARGING_MAX 75
+#else
 #define STORE_MODE_CHARGING_MAX 80
+#endif
 #define STORE_MODE_CHARGING_MIN 70
 #else						/* !SEC_FACTORY, STORE MODE */
 #define STORE_MODE_CHARGING_MAX 70
@@ -299,6 +304,10 @@ struct sec_battery_info {
 	int wpc_temp;
 	int coil_temp;
 	int slave_chg_temp;
+#if defined(CONFIG_ABNORMAL_BAT_THM_WA)
+	bool temp_control;
+	int prev_bat_temp;
+#endif
 
 	int temp_adc;
 	int temp_ambient_adc;

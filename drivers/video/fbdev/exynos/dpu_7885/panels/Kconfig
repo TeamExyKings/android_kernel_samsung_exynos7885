@@ -12,6 +12,11 @@ config EXYNOS_DECON_MDNIE_LITE
 	tristate "Support MDNIE LITE"
 	default n
 
+config SUPPORT_POC_FLASH
+	depends on EXYNOS_DECON_LCD
+	tristate "Support display poc flash"
+	default n
+
 config EXYNOS_DECON_LCD_S6E3FA0
 	depends on EXYNOS_DECON_LCD && EXYNOS_MIPI_DSIM
 	tristate "S6E3FA0 AMOLED FHD LCD driver"
@@ -68,10 +73,6 @@ config EXYNOS_DECON_LCD_HX8279D_GTA3XLLTE
 	depends on EXYNOS_DECON_LCD
 	bool "HX8279D_GTA3XLLTE LCD driver"
 
-config EXYNOS_DECON_LCD_NT36672A_M20
-	depends on EXYNOS_DECON_LCD
-	bool "NT36672A_M20 LCD driver"
-
 config EXYNOS_DECON_LCD_HX83112A_M20
 	depends on EXYNOS_DECON_LCD
 	bool "HX83112A_M20 LCD driver"
@@ -83,15 +84,6 @@ config EXYNOS_DECON_LCD_EA8076_M30
 config EXYNOS_DECON_LCD_EA8076_A30
 	depends on EXYNOS_DECON_LCD
 	bool "EA8076_A30 LCD driver"
-
-config EXYNOS_DECON_LCD_A30_DTV_MIPI
-	depends on EXYNOS_DECON_LCD
-	tristate "Support A30 LTN DTV MIPI 1.1Gbps"
-	default n
-
-config EXYNOS_DECON_LCD_S6E3AA2_A40
-	depends on EXYNOS_DECON_LCD
-	bool "S6E3AA2_A40 LCD driver"
 
 config EXYNOS_DECON_LCD_HX8279D_WISDOM
 	depends on EXYNOS_DECON_LCD
@@ -124,3 +116,7 @@ config EXYNOS_DECON_LCD_S6D7AA0_XCOVER4S
 config EXYNOS_DECON_LCD_S6E8FC0_A30C
 	depends on EXYNOS_DECON_LCD
 	bool "S6E8FC0_A30C LCD driver"
+
+config EXYNOS_DECON_LCD_S6E8FC1_A30S
+	depends on EXYNOS_DECON_LCD
+	bool "S6E8FC1_A30S LCD driver"

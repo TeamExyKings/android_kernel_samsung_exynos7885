@@ -256,58 +256,30 @@ static void gp2ap_InitData(struct gp2ap_data *data)
 {
 	u8    wdata;
 	u8    offset;
-	int   ret;
         uint32_t adc = 0;
 
 	gp2ap_i2c_read(REG_DYNAMIC_CAL_RESULT, &offset, sizeof(offset), data->client);
 	SENSOR_INFO("offset=%d\n", offset);
 
 	if(data->handle_high_offset) {
-		data->ps_high_th = FORCE_CLOSE_HIGH_THD;
-		data->ps_low_th = FORCE_CLOSE_LOW_THD;
+		data->ps_high_th = data->force_close_thd_high;
+		data->ps_low_th = data->force_close_thd_low;
 		data->handle_high_offset = false;
 		SENSOR_INFO("Tune High th: high %d, low %d\n", data->ps_high_th, data->ps_low_th);
-	}
-	else {
+	} else {
 		if (!data->pre_test) {
 			if (offset >= OFFSET_TUNE_ADC &&
     				data->tune_adc_count < MAX_RETRY_TUNE_ADC_COUNT) {
     				adc = gp2ap_get_proximity_adc(data);
-    				wdata = (adc+ 1200)/255;
+    				wdata = (adc+ 1280)/256;
     				SENSOR_INFO("Tune ADC: adc %d, wdata 0x%x\n", adc, wdata);
-    				if(wdata > 0x0D) wdata = 0x0D;
-    				if(wdata >= 0x05) data->handle_high_offset = true;
+    				if(wdata > 0x0D)
+					wdata = 0x0D;
+    				data->handle_high_offset = true;
     				gp2ap_i2c_write(0x8D, wdata, data->client);
     				data->tune_adc_count++;
     				return;
 			}
-		}
-
-		if (data->prox_settings == 0) {
-			ret = gp2ap_read_settings(data);
-			if (ret > 0) {
-    				if (data->ps_high_th == data->ps_high_th_2)
-    					data->prox_settings = 2;
-    				else
-    					data->prox_settings = 1;
-    				SENSOR_INFO("Applied File prox_settings=%d, led_reg_val=%d, high_thd=%d, low_thd=%d\n",
-    					data->prox_settings, data->led_reg_val, data->ps_high_th, data->ps_low_th);
-			} else {
-    				data->prox_settings = 1;
-    				data->led_reg_val = data->led_reg_val_1;
-    				data->ps_high_th = data->ps_high_th_1;
-    				data->ps_low_th = data->ps_low_th_1;
-    				SENSOR_INFO("Applied prox_settings=%d, led_reg_val=%d, high_thd=%d, low_thd=%d\n",
-    					data->prox_settings, data->led_reg_val, data->ps_high_th, data->ps_low_th);
- 			}
- 		} else if (data->prox_settings == 1) {
-			data->led_reg_val = data->led_reg_val_1;
-			data->ps_high_th = data->ps_high_th_1;
-			data->ps_low_th = data->ps_low_th_1;
-		} else if (data->prox_settings == 2) {
-			data->led_reg_val = data->led_reg_val_2;
-			data->ps_high_th = data->ps_high_th_2;
-			data->ps_low_th = data->ps_low_th_2;
 		}
 	}
 
@@ -318,9 +290,9 @@ static void gp2ap_InitData(struct gp2ap_data *data)
 	wdata = data->led_reg_val;		     gp2ap_i2c_write(0x86, wdata, data->client);
 	wdata = 0x20;    				     gp2ap_i2c_write(0x87, wdata, data->client);
 	wdata = (u8)data->ps_low_th;         gp2ap_i2c_write(0x88, wdata, data->client);
-	wdata = (u8)(data->ps_low_th>>8);    gp2ap_i2c_write(0x89, wdata, data->client);
+	wdata = (u8)(data->ps_low_th >> 8);    gp2ap_i2c_write(0x89, wdata, data->client);
 	wdata = (u8)data->ps_high_th;        gp2ap_i2c_write(0x8A, wdata, data->client);
-	wdata = (u8)(data->ps_high_th>>8);   gp2ap_i2c_write(0x8B, wdata, data->client);
+	wdata = (u8)(data->ps_high_th >> 8);   gp2ap_i2c_write(0x8B, wdata, data->client);
 
 	wdata = 0x88;    gp2ap_i2c_write(0x8E, wdata, data->client);
 	wdata = 0x10;    gp2ap_i2c_write(0xB1, wdata, data->client);
@@ -365,11 +337,54 @@ static ssize_t ps_enable_show(struct device *dev,
 	return sprintf(buf, "%d", enabled);
 }
 
+
+static void gp2ap_ps_setting(struct gp2ap_data *data)
+{
+	int ret = 0;
+	SENSOR_INFO("\n");
+	if (data->prox_settings == 0) {
+		ret = gp2ap_read_settings(data);
+		if (ret > 0) {
+	    		if (data->ps_high_th == data->ps_high_th_2)
+	    				data->prox_settings = 2;
+	    			else
+	    				data->prox_settings = 1;
+
+	    			SENSOR_INFO("Applied File prox_settings=%d, led_reg_val=%d, high_thd=%d, low_thd=%d\n",
+	    				data->prox_settings, data->led_reg_val, data->ps_high_th, data->ps_low_th);
+			} else {
+	    			data->prox_settings = 1;
+	    			data->led_reg_val = data->led_reg_val_1;
+	    			data->ps_high_th = data->ps_high_th_1;
+	    			data->ps_low_th = data->ps_low_th_1;
+
+	    			SENSOR_INFO("Applied prox_settings=%d, led_reg_val=%d, high_thd=%d, low_thd=%d\n",
+	    				data->prox_settings, data->led_reg_val, data->ps_high_th, data->ps_low_th);
+	 		}
+	} else if (data->prox_settings == 1) {
+		data->led_reg_val = data->led_reg_val_1;
+		data->ps_high_th = data->ps_high_th_1;
+		data->ps_low_th = data->ps_low_th_1;
+		
+	    	SENSOR_INFO("led_reg_val=%d, high_thd=%d, low_thd=%d\n",
+	    		data->led_reg_val, data->ps_high_th, data->ps_low_th);
+		
+	} else if (data->prox_settings == 2) {
+		data->led_reg_val = data->led_reg_val_2;
+		data->ps_high_th = data->ps_high_th_2;
+		data->ps_low_th = data->ps_low_th_2;
+
+	    	SENSOR_INFO("led_reg_val=%d, high_thd=%d, low_thd=%d\n",
+	    		data->led_reg_val, data->ps_high_th, data->ps_low_th);		
+	}
+}
+
 static int gp2ap_ps_onoff(u8 onoff, struct gp2ap_data *data)
 {
 	SENSOR_INFO("proximity_sensor onoff = %d\n", onoff);
 
 	if (onoff) {
+		gp2ap_ps_setting(data);
 		if (data->dynamic_calib_enabled) {
 			gp2ap_InitDataDynamicCalibration(data);
 			data->dynamic_calib_done = 0;
@@ -379,12 +394,11 @@ static int gp2ap_ps_onoff(u8 onoff, struct gp2ap_data *data)
 
 			gp2ap_StartMeasurement(data);
 
-            msleep(50);
+			msleep(50);
 
-            SENSOR_INFO("dynamic calibration done \n");
-            data->dynamic_calib_done = 1;
-
-            gp2ap_InitData(data);
+			SENSOR_INFO("dynamic calibration done\n");
+			data->dynamic_calib_done = 1;
+			gp2ap_InitData(data);
 		} else {
 			gp2ap_InitData(data);
 		}
@@ -722,6 +736,9 @@ static ssize_t proximity_thresh_high_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct gp2ap_data *data = dev_get_drvdata(dev);
+
+	SENSOR_INFO("%d\n", data->ps_high_th);
+
 	return scnprintf(buf, PAGE_SIZE, "%d\n", data->ps_high_th);
 }
 
@@ -755,6 +772,9 @@ static ssize_t proximity_thresh_low_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct gp2ap_data *data = dev_get_drvdata(dev);
+
+	SENSOR_INFO("%d\n", data->ps_low_th);
+	
 	return scnprintf(buf, PAGE_SIZE, "%d\n", data->ps_low_th);
 }
 
@@ -824,6 +844,11 @@ static ssize_t modify_settings_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	struct gp2ap_data *data =  dev_get_drvdata(dev);
+
+	if (data->ps_high_th == data->force_close_thd_high && data->ps_low_th == data->force_close_thd_low) {
+		SENSOR_INFO("Skip changing proximity settings (%d, %d)\n",data->ps_high_th,data->ps_low_th);		
+		return size;
+	}
 
 	if (sysfs_streq(buf, "1"))
 		data->prox_settings = 1;
@@ -1177,6 +1202,20 @@ static int gp2ap110s_parse_dt(struct device *dev, struct gp2ap_data *data)
 	if (ret < 0) {
 		SENSOR_ERR("Cannot set settings_thd_high through DTSI, ret=%d\n", ret);
 		return -EINVAL;
+	}
+
+	ret = of_property_read_u32(np, "gp2ap110s,force_close_thd_low",
+		&data->force_close_thd_low);
+	if (ret < 0) {
+		data->force_close_thd_low = FORCE_CLOSE_LOW_THD;
+		SENSOR_ERR("Cannot set through DTSI, use default force_close_thd_low = %d\n", data->force_close_thd_low);
+	}
+
+	ret = of_property_read_u32(np, "gp2ap110s,force_close_thd_high",
+		&data->force_close_thd_high);
+	if (ret < 0) {
+		data->force_close_thd_high = FORCE_CLOSE_HIGH_THD;
+		SENSOR_ERR("Cannot set through DTSI, use default force_close_thd_high = %d\n", data->force_close_thd_high);
 	}
 
 	return 0;

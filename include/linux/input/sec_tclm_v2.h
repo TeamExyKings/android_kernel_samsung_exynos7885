@@ -79,6 +79,7 @@ struct sec_tclm_data {
 	int (*tclm_read)(struct i2c_client *client, int address);
 	int (*tclm_write)(struct i2c_client *client);
 	int (*tclm_execute_force_calibration)(struct i2c_client *client, int cal_mode);
+	void (*tclm_parse_dt)(struct i2c_client *client, struct sec_tclm_data *tdata);
 	struct sec_tclm_nvdata nvdata;
 	bool is_cal_done;
 };

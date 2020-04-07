@@ -34,7 +34,7 @@
 #define TA_WATER_CHK_DURATION_MS	5000
 
 /* define timer */
-#define S2MU106_ROLE_SWAP_TIME_MS		(1350)
+#define S2MU106_ROLE_SWAP_TIME_MS		(500)
 #define S2MU106_HARD_RESET_DELAY_MS		(300)
 #define S2MU106_WAIT_RD_DETACH_DELAY_MS		(200)
 #define S2MU106_WAIT_ATTACH_DELAY_MS		(30)
@@ -44,7 +44,7 @@
 #define S2MU106_ATTACH_STATE_CHECK_TIME		(1000)
 
 #define S2MU106_WATER_THRESHOLD_MV			(600)
-#define S2MU106_WATER_DRY_THRESHOLD_MV		(800)
+#define S2MU106_WATER_DRY_THRESHOLD_MV		(1500)
 
 #define S2MU106_WATER_THRESHOLD_POST_MV		(300)
 
@@ -574,20 +574,6 @@ typedef enum {
 } CCIC_DETACH_TYPE;
 
 typedef enum {
-	PLUG_CTRL_RP0 = 0,
-	PLUG_CTRL_RP80 = 1,
-	PLUG_CTRL_RP180 = 2,
-	PLUG_CTRL_RP330 = 3
-} CCIC_RP_SCR_SEL;
-
-typedef enum {
-	TYPE_C_DETACH = 0,
-	TYPE_C_ATTACH_DFP = 1, /* Host */
-	TYPE_C_ATTACH_UFP = 2, /* Device */
-	TYPE_C_ATTACH_DRP = 3, /* Dual role */
-} CCIC_OTP_MODE;
-
-typedef enum {
 	PLUG_CTRL_RD = 0,
 	PLUG_CTRL_RP = 1,
 } CCIC_RP_RD_SEL;
@@ -622,6 +608,7 @@ struct s2mu106_usbpd_data {
 	struct mutex poll_mutex;
 	struct mutex lpm_mutex;
 	struct mutex cc_mutex;
+	struct mutex water_mutex;
 	int vconn_en;
 	int regulator_en;
 	int irq_gpio;
@@ -684,7 +671,8 @@ struct s2mu106_usbpd_data {
 	struct power_supply_desc ccic_desc;
 	struct power_supply *psy_pm;
 	struct power_supply *psy_ccic;
-
+	int cc1_val;
+	int cc2_val;
 	struct regulator *regulator;
 };
 
@@ -693,8 +681,12 @@ extern void s2mu106_usbpd_set_muic_type(int type);
 #if defined(CONFIG_CCIC_NOTIFIER)
 extern void s2mu106_control_option_command(struct s2mu106_usbpd_data *usbpd_data, int cmd);
 #endif
+#if defined(CONFIG_SEC_FACTORY)
+extern int s2mu106_sys_power_off_water_check(struct s2mu106_usbpd_data *pdic_data);
+#endif
 extern void s2mu106_rprd_mode_change(struct s2mu106_usbpd_data *usbpd_data, u8 mode);
 extern void vbus_turn_on_ctrl(struct s2mu106_usbpd_data *usbpd_data, bool enable);
 extern int s2mu106_set_lpm_mode(struct s2mu106_usbpd_data *pdic_data);
 extern int s2mu106_set_normal_mode(struct s2mu106_usbpd_data *pdic_data);
 #endif /* __USBPD_S2MU106_H__ */
+

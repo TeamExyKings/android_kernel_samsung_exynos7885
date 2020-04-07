@@ -23,8 +23,8 @@ static struct mdnie_color_lens_info color_lens_info = {
 };
 
 static struct rgb_info wrgb_swa = {
-	.r = 11,
-	.g = 13,
+	.r = 0,
+	.g = 0,
 	.b = 0
 };
 
@@ -48,15 +48,15 @@ static inline int color_offset_f4(int x, int y)
 /* color coordination order is WR, WG, WB */
 static unsigned char coordinate_data_1[] = {
 	0xff, 0xff, 0xff, /* dummy */
-	0xff, 0xfd, 0xfc, /* Tune_1 */
-	0xff, 0xfe, 0xff, /* Tune_2 */
-	0xfc, 0xfc, 0xff, /* Tune_3 */
-	0xff, 0xfe, 0xfd, /* Tune_4 */
+	0xff, 0xff, 0xff, /* Tune_1 */
+	0xff, 0xff, 0xff, /* Tune_2 */
+	0xff, 0xff, 0xff, /* Tune_3 */
+	0xff, 0xff, 0xff, /* Tune_4 */
 	0xff, 0xff, 0xff, /* Tune_5 */
-	0xfc, 0xfd, 0xff, /* Tune_6 */
-	0xfe, 0xff, 0xfc, /* Tune_7 */
-	0xfe, 0xff, 0xfe, /* Tune_8 */
-	0xfc, 0xfe, 0xff, /* Tune_9 */
+	0xff, 0xff, 0xff, /* Tune_6 */
+	0xff, 0xff, 0xff, /* Tune_7 */
+	0xff, 0xff, 0xff, /* Tune_8 */
+	0xff, 0xff, 0xff, /* Tune_9 */
 };
 
 static unsigned char coordinate_data_2[] = {
@@ -1415,6 +1415,101 @@ static unsigned char NATURAL_UI_2[] = {
 	0x80, // csc_user_mode_on
 };
 
+static unsigned char MOVIE_UI_1[] = {
+	0x81, // CRC, BLF
+	0x90, // CRC on/off, BLF on/off, CRC on/off 0 0 00 00 00 
+};
+
+static unsigned char MOVIE_UI_2[] = {
+	0xB1, // CRC, BLF
+	0x00, // crc_bypass
+	0xff, // crc_lut_mode1_rr
+	0x00, // crc_lut_mode1_rg
+	0x00, // crc_lut_mode1_rb
+	0x00, // crc_lut_mode1_gr
+	0xff, // crc_lut_mode1_gg
+	0x00, // crc_lut_mode1_gb
+	0x00, // crc_lut_mode1_br
+	0x00, // crc_lut_mode1_bg
+	0xff, // crc_lut_mode1_bb
+	0x00, // crc_lut_mode1_cr
+	0xff, // crc_lut_mode1_cg
+	0xff, // crc_lut_mode1_cb
+	0xff, // crc_lut_mode1_mr
+	0x00, // crc_lut_mode1_mg
+	0xff, // crc_lut_mode1_mb
+	0xff, // crc_lut_mode1_yr
+	0xff, // crc_lut_mode1_yg
+	0x00, // crc_lut_mode1_yb
+	0xff, // crc_lut_mode1_wr
+	0xff, // crc_lut_mode1_wg
+	0xff, // crc_lut_mode1_wb
+	0xf1, // crc_lut_mode2_rr
+	0x14, // crc_lut_mode2_rg
+	0x07, // crc_lut_mode2_rb
+	0x00, // crc_lut_mode2_gr
+	0xb4, // crc_lut_mode2_gg
+	0x07, // crc_lut_mode2_gb
+	0x07, // crc_lut_mode2_br
+	0x06, // crc_lut_mode2_bg
+	0xc1, // crc_lut_mode2_bb
+	0x00, // crc_lut_mode2_cr
+	0xd0, // crc_lut_mode2_cg
+	0xc9, // crc_lut_mode2_cb
+	0xff, // crc_lut_mode2_mr
+	0x1b, // crc_lut_mode2_mg
+	0xd2, // crc_lut_mode2_mb
+	0xe4, // crc_lut_mode2_yr
+	0xde, // crc_lut_mode2_yg
+	0x0f, // crc_lut_mode2_yb
+	0xff, // crc_lut_mode2_wr
+	0xff, // crc_lut_mode2_wg
+	0xff, // crc_lut_mode2_wb
+	0xff, // crc_lut_mode3_rr
+	0x00, // crc_lut_mode3_rg
+	0x00, // crc_lut_mode3_rb
+	0x00, // crc_lut_mode3_gr
+	0xff, // crc_lut_mode3_gg
+	0x00, // crc_lut_mode3_gb
+	0x00, // crc_lut_mode3_br
+	0x00, // crc_lut_mode3_bg
+	0xff, // crc_lut_mode3_bb
+	0x00, // crc_lut_mode3_cr
+	0xff, // crc_lut_mode3_cg
+	0xff, // crc_lut_mode3_cb
+	0xff, // crc_lut_mode3_mr
+	0x00, // crc_lut_mode3_mg
+	0xff, // crc_lut_mode3_mb
+	0xff, // crc_lut_mode3_yr
+	0xff, // crc_lut_mode3_yg
+	0x00, // crc_lut_mode3_yb
+	0xff, // crc_lut_mode3_wr
+	0xff, // crc_lut_mode3_wg
+	0xff, // crc_lut_mode3_wb
+	0xff, // crc_lut_mode4_rr
+	0x00, // crc_lut_mode4_rg
+	0x00, // crc_lut_mode4_rb
+	0x00, // crc_lut_mode4_gr
+	0xff, // crc_lut_mode4_gg
+	0x00, // crc_lut_mode4_gb
+	0x00, // crc_lut_mode4_br
+	0x00, // crc_lut_mode4_bg
+	0xff, // crc_lut_mode4_bb
+	0x00, // crc_lut_mode4_cr
+	0xff, // crc_lut_mode4_cg
+	0xff, // crc_lut_mode4_cb
+	0xff, // crc_lut_mode4_mr
+	0x00, // crc_lut_mode4_mg
+	0xff, // crc_lut_mode4_mb
+	0xff, // crc_lut_mode4_yr
+	0xff, // crc_lut_mode4_yg
+	0x00, // crc_lut_mode4_yb
+	0xff, // crc_lut_mode4_wr
+	0xff, // crc_lut_mode4_wg
+	0xff, // crc_lut_mode4_wb
+	0x80, // csc_user_mode_on
+};
+
 static unsigned char AUTO_UI_1[] = {
 	0x81, // CRC, BLF
 	0x90, // CRC on/off, BLF on/off, CRC on/off 0 0 00 00 00 
@@ -1431,7 +1526,7 @@ static unsigned char AUTO_UI_2[] = {
 	0x00, // crc_lut_mode1_gb
 	0x00, // crc_lut_mode1_br
 	0x00, // crc_lut_mode1_bg
-	0xf5, // crc_lut_mode1_bb
+	0xff, // crc_lut_mode1_bb
 	0x00, // crc_lut_mode1_cr
 	0xff, // crc_lut_mode1_cg
 	0xff, // crc_lut_mode1_cb
@@ -1528,9 +1623,104 @@ static unsigned char AUTO_GALLERY_2[] = {
 	0x00, // crc_lut_mode1_gb
 	0x00, // crc_lut_mode1_br
 	0x00, // crc_lut_mode1_bg
-	0xf5, // crc_lut_mode1_bb
+	0xff, // crc_lut_mode1_bb
 	0x00, // crc_lut_mode1_cr
-	0xff, // crc_lut_mode1_cg
+	0xf0, // crc_lut_mode1_cg
+	0xff, // crc_lut_mode1_cb
+	0xff, // crc_lut_mode1_mr
+	0x00, // crc_lut_mode1_mg
+	0xff, // crc_lut_mode1_mb
+	0xff, // crc_lut_mode1_yr
+	0xff, // crc_lut_mode1_yg
+	0x00, // crc_lut_mode1_yb
+	0xff, // crc_lut_mode1_wr
+	0xff, // crc_lut_mode1_wg
+	0xff, // crc_lut_mode1_wb
+	0xf1, // crc_lut_mode2_rr
+	0x14, // crc_lut_mode2_rg
+	0x07, // crc_lut_mode2_rb
+	0x00, // crc_lut_mode2_gr
+	0xb4, // crc_lut_mode2_gg
+	0x07, // crc_lut_mode2_gb
+	0x07, // crc_lut_mode2_br
+	0x06, // crc_lut_mode2_bg
+	0xc1, // crc_lut_mode2_bb
+	0x00, // crc_lut_mode2_cr
+	0xd0, // crc_lut_mode2_cg
+	0xc9, // crc_lut_mode2_cb
+	0xff, // crc_lut_mode2_mr
+	0x1b, // crc_lut_mode2_mg
+	0xd2, // crc_lut_mode2_mb
+	0xe4, // crc_lut_mode2_yr
+	0xde, // crc_lut_mode2_yg
+	0x0f, // crc_lut_mode2_yb
+	0xff, // crc_lut_mode2_wr
+	0xff, // crc_lut_mode2_wg
+	0xff, // crc_lut_mode2_wb
+	0xff, // crc_lut_mode3_rr
+	0x00, // crc_lut_mode3_rg
+	0x00, // crc_lut_mode3_rb
+	0x00, // crc_lut_mode3_gr
+	0xff, // crc_lut_mode3_gg
+	0x00, // crc_lut_mode3_gb
+	0x00, // crc_lut_mode3_br
+	0x00, // crc_lut_mode3_bg
+	0xff, // crc_lut_mode3_bb
+	0x00, // crc_lut_mode3_cr
+	0xff, // crc_lut_mode3_cg
+	0xff, // crc_lut_mode3_cb
+	0xff, // crc_lut_mode3_mr
+	0x00, // crc_lut_mode3_mg
+	0xff, // crc_lut_mode3_mb
+	0xff, // crc_lut_mode3_yr
+	0xff, // crc_lut_mode3_yg
+	0x00, // crc_lut_mode3_yb
+	0xff, // crc_lut_mode3_wr
+	0xff, // crc_lut_mode3_wg
+	0xff, // crc_lut_mode3_wb
+	0xff, // crc_lut_mode4_rr
+	0x00, // crc_lut_mode4_rg
+	0x00, // crc_lut_mode4_rb
+	0x00, // crc_lut_mode4_gr
+	0xff, // crc_lut_mode4_gg
+	0x00, // crc_lut_mode4_gb
+	0x00, // crc_lut_mode4_br
+	0x00, // crc_lut_mode4_bg
+	0xff, // crc_lut_mode4_bb
+	0x00, // crc_lut_mode4_cr
+	0xff, // crc_lut_mode4_cg
+	0xff, // crc_lut_mode4_cb
+	0xff, // crc_lut_mode4_mr
+	0x00, // crc_lut_mode4_mg
+	0xff, // crc_lut_mode4_mb
+	0xff, // crc_lut_mode4_yr
+	0xff, // crc_lut_mode4_yg
+	0x00, // crc_lut_mode4_yb
+	0xff, // crc_lut_mode4_wr
+	0xff, // crc_lut_mode4_wg
+	0xff, // crc_lut_mode4_wb
+	0x80, // csc_user_mode_on
+};
+
+static unsigned char AUTO_GALLERY_SWA_1[] = {
+	0x81, // CRC, BLF
+	0x90, // CRC on/off, BLF on/off, CRC on/off 0 0 00 00 00 
+};
+
+static unsigned char AUTO_GALLERY_SWA_2[] = {
+	0xB1, // CRC, BLF
+	0x00, // crc_bypass
+	0xff, // crc_lut_mode1_rr
+	0x00, // crc_lut_mode1_rg
+	0x00, // crc_lut_mode1_rb
+	0x00, // crc_lut_mode1_gr
+	0xff, // crc_lut_mode1_gg
+	0x00, // crc_lut_mode1_gb
+	0x00, // crc_lut_mode1_br
+	0x00, // crc_lut_mode1_bg
+	0xff, // crc_lut_mode1_bb
+	0x00, // crc_lut_mode1_cr
+	0xf0, // crc_lut_mode1_cg
 	0xff, // crc_lut_mode1_cb
 	0xff, // crc_lut_mode1_mr
 	0x00, // crc_lut_mode1_mg
@@ -1629,9 +1819,150 @@ static unsigned char AUTO_CAMERA_2[] = {
 	0x00, // crc_lut_mode1_gb
 	0x00, // crc_lut_mode1_br
 	0x00, // crc_lut_mode1_bg
-	0xf5, // crc_lut_mode1_bb
+	0xff, // crc_lut_mode1_bb
 	0x00, // crc_lut_mode1_cr
-	0xff, // crc_lut_mode1_cg
+	0xf0, // crc_lut_mode1_cg
+	0xff, // crc_lut_mode1_cb
+	0xff, // crc_lut_mode1_mr
+	0x00, // crc_lut_mode1_mg
+	0xff, // crc_lut_mode1_mb
+	0xff, // crc_lut_mode1_yr
+	0xff, // crc_lut_mode1_yg
+	0x00, // crc_lut_mode1_yb
+	0xff, // crc_lut_mode1_wr
+	0xff, // crc_lut_mode1_wg
+	0xff, // crc_lut_mode1_wb
+	0xf1, // crc_lut_mode2_rr
+	0x14, // crc_lut_mode2_rg
+	0x07, // crc_lut_mode2_rb
+	0x00, // crc_lut_mode2_gr
+	0xb4, // crc_lut_mode2_gg
+	0x07, // crc_lut_mode2_gb
+	0x07, // crc_lut_mode2_br
+	0x06, // crc_lut_mode2_bg
+	0xc1, // crc_lut_mode2_bb
+	0x00, // crc_lut_mode2_cr
+	0xd0, // crc_lut_mode2_cg
+	0xc9, // crc_lut_mode2_cb
+	0xff, // crc_lut_mode2_mr
+	0x1b, // crc_lut_mode2_mg
+	0xd2, // crc_lut_mode2_mb
+	0xe4, // crc_lut_mode2_yr
+	0xde, // crc_lut_mode2_yg
+	0x0f, // crc_lut_mode2_yb
+	0xff, // crc_lut_mode2_wr
+	0xff, // crc_lut_mode2_wg
+	0xff, // crc_lut_mode2_wb
+	0xff, // crc_lut_mode3_rr
+	0x00, // crc_lut_mode3_rg
+	0x00, // crc_lut_mode3_rb
+	0x00, // crc_lut_mode3_gr
+	0xff, // crc_lut_mode3_gg
+	0x00, // crc_lut_mode3_gb
+	0x00, // crc_lut_mode3_br
+	0x00, // crc_lut_mode3_bg
+	0xff, // crc_lut_mode3_bb
+	0x00, // crc_lut_mode3_cr
+	0xff, // crc_lut_mode3_cg
+	0xff, // crc_lut_mode3_cb
+	0xff, // crc_lut_mode3_mr
+	0x00, // crc_lut_mode3_mg
+	0xff, // crc_lut_mode3_mb
+	0xff, // crc_lut_mode3_yr
+	0xff, // crc_lut_mode3_yg
+	0x00, // crc_lut_mode3_yb
+	0xff, // crc_lut_mode3_wr
+	0xff, // crc_lut_mode3_wg
+	0xff, // crc_lut_mode3_wb
+	0x30, // blf_fixed_parameter
+	0x00, // blue_light_reduction_level 0 - ff
+	0x66,
+	0xb2,
+	0xff,
+	0x14, // Diff LUT #0, Red, [r:8bit, g:8bit, b:8bit]
+	0x00,
+	0x00,
+	0x11, // Diff LUT #0, Green, [r:8bit, g:8bit, b:8bit]
+	0x24,
+	0x00,
+	0x04, // Diff LUT #0, Blue, [r:8bit, g:8bit, b:8bit]
+	0x00,
+	0x41,
+	0x14, // Diff LUT #0, Cyan, [r:8bit, g:8bit, b:8bit]
+	0x24,
+	0x41,
+	0x11, // Diff LUT #0, Magenta, [r:8bit, g:8bit, b:8bit]
+	0x00,
+	0x41,
+	0x04, // Diff LUT #0, Yellow, [r:8bit, g:8bit, b:8bit]
+	0x24,
+	0x00,
+	0x00, // Diff LUT #0, White, [r:8bit, g:8bit, b:8bit]
+	0x24,
+	0x41,
+	0x1f, // Diff LUT #1, Red, [r:8bit, g:8bit, b:8bit]
+	0x00,
+	0x00,
+	0x19, // Diff LUT #1, Green, [r:8bit, g:8bit, b:8bit]
+	0x35,
+	0x00,
+	0x04, // Diff LUT #1, Blue, [r:8bit, g:8bit, b:8bit]
+	0x00,
+	0x66,
+	0x1e, // Diff LUT #1, Cyan, [r:8bit, g:8bit, b:8bit]
+	0x35,
+	0x66,
+	0x19, // Diff LUT #1, Magenta, [r:8bit, g:8bit, b:8bit]
+	0x00,
+	0x66,
+	0x04, // Diff LUT #1, Yellow, [r:8bit, g:8bit, b:8bit]
+	0x35,
+	0x00,
+	0x00, // Diff LUT #1, White, [r:8bit, g:8bit, b:8bit]
+	0x35,
+	0x66,
+	0x1d, // Diff LUT #2, Red, [r:8bit, g:8bit, b:8bit]
+	0x00,
+	0x00,
+	0x1d, // Diff LUT #2, Green, [r:8bit, g:8bit, b:8bit]
+	0x38,
+	0x00,
+	0x01, // Diff LUT #2, Blue, [r:8bit, g:8bit, b:8bit]
+	0x00,
+	0x3c,
+	0x1e, // Diff LUT #2, Cyan, [r:8bit, g:8bit, b:8bit]
+	0x38,
+	0x3c,
+	0x1d, // Diff LUT #2, Magenta, [r:8bit, g:8bit, b:8bit]
+	0x00,
+	0x3c,
+	0x01, // Diff LUT #2, Yellow, [r:8bit, g:8bit, b:8bit]
+	0x38,
+	0x00,
+	0x00, // Diff LUT #2, White, [r:8bit, g:8bit, b:8bit]
+	0x38,
+	0x3c,
+};
+
+static unsigned char AUTO_CAMERA_SWA_1[] = {
+	0x81, // CRC, BLF
+	0x90, // CRC on/off, BLF on/off, CRC on/off 0 0 00 00 00 
+};
+
+static unsigned char AUTO_CAMERA_SWA_2[] = {
+	0xB1, // CRC, BLF
+	0x00, // crc_bypass
+	0xff, // crc_lut_mode1_rr
+	0x00, // crc_lut_mode1_rg
+	0x00, // crc_lut_mode1_rb
+	0x00, // crc_lut_mode1_gr
+	0xff, // crc_lut_mode1_gg
+	0x00, // crc_lut_mode1_gb
+	0x00, // crc_lut_mode1_br
+	0x00, // crc_lut_mode1_bg
+	0xff, // crc_lut_mode1_bb
+	0x00, // crc_lut_mode1_cr
+	0xf0, // crc_lut_mode1_cg
 	0xff, // crc_lut_mode1_cb
 	0xff, // crc_lut_mode1_mr
 	0x00, // crc_lut_mode1_mg
@@ -1785,8 +2116,8 @@ static unsigned char AUTO_EBOOK_2[] = {
 	0xff, // crc_lut_mode1_yg
 	0x00, // crc_lut_mode1_yb
 	0xff, // crc_lut_mode1_wr
-	0xf4, // crc_lut_mode1_wg
-	0xea, // crc_lut_mode1_wb
+	0xf3, // crc_lut_mode1_wg
+	0xde, // crc_lut_mode1_wb
 	0xf1, // crc_lut_mode2_rr
 	0x14, // crc_lut_mode2_rg
 	0x07, // crc_lut_mode2_rb
@@ -2527,7 +2858,7 @@ static struct mdnie_table dmb_table[MODE_MAX] = {
 	MDNIE_SET(DYNAMIC_UI),
 	MDNIE_SET(STANDARD_UI),
 	MDNIE_SET(NATURAL_UI),
-	MDNIE_SET(AUTO_GALLERY),
+	MDNIE_SET(MOVIE_UI),
 	MDNIE_SET(AUTO_GALLERY),
 	MDNIE_SET(AUTO_EBOOK)
 };
@@ -2549,14 +2880,14 @@ static struct mdnie_table main_table[SCENARIO_MAX][MODE_MAX] = {
 		MDNIE_SET(DYNAMIC_UI),
 		MDNIE_SET(STANDARD_UI),
 		MDNIE_SET(NATURAL_UI),
-		MDNIE_SET(AUTO_UI),
+		MDNIE_SET(MOVIE_UI),
 		MDNIE_SET(AUTO_UI),
 		MDNIE_SET(AUTO_EBOOK)
 	}, {
 		MDNIE_SET(DYNAMIC_UI),
 		MDNIE_SET(STANDARD_UI),
 		MDNIE_SET(NATURAL_UI),
-		MDNIE_SET(AUTO_UI),
+		MDNIE_SET(MOVIE_UI),
 		MDNIE_SET(AUTO_UI),
 		MDNIE_SET(AUTO_EBOOK)
 	},
@@ -2564,36 +2895,45 @@ static struct mdnie_table main_table[SCENARIO_MAX][MODE_MAX] = {
 		MDNIE_SET(DYNAMIC_UI),
 		MDNIE_SET(STANDARD_UI),
 		MDNIE_SET(NATURAL_UI),
-		MDNIE_SET(AUTO_UI),
+		MDNIE_SET(MOVIE_UI),
 		MDNIE_SET(AUTO_CAMERA),
+		MDNIE_SET(AUTO_EBOOK)
+	},
+	[CAMERA_SWA_MODE] = {
+		MDNIE_SET(DYNAMIC_UI),
+		MDNIE_SET(STANDARD_UI),
+		MDNIE_SET(NATURAL_UI),
+		MDNIE_SET(MOVIE_UI),
+		MDNIE_SET(AUTO_CAMERA_SWA),
 		MDNIE_SET(AUTO_EBOOK)
 	},
 	[GALLERY_MODE] = {
 		MDNIE_SET(DYNAMIC_UI),
 		MDNIE_SET(STANDARD_UI),
 		MDNIE_SET(NATURAL_UI),
-		MDNIE_SET(AUTO_UI),
+		MDNIE_SET(MOVIE_UI),
+		MDNIE_SET(AUTO_GALLERY),
+		MDNIE_SET(AUTO_EBOOK)
+	},
+	[GALLERY_SWA_MODE] = {
+		MDNIE_SET(DYNAMIC_UI),
+		MDNIE_SET(STANDARD_UI),
+		MDNIE_SET(NATURAL_UI),
+		MDNIE_SET(MOVIE_UI),
+		MDNIE_SET(AUTO_GALLERY_SWA),
+		MDNIE_SET(AUTO_EBOOK)
+	}, {
+		MDNIE_SET(DYNAMIC_UI),
+		MDNIE_SET(STANDARD_UI),
+		MDNIE_SET(NATURAL_UI),
+		MDNIE_SET(MOVIE_UI),
 		MDNIE_SET(AUTO_GALLERY),
 		MDNIE_SET(AUTO_EBOOK)
 	}, {
 		MDNIE_SET(DYNAMIC_UI),
 		MDNIE_SET(STANDARD_UI),
 		MDNIE_SET(NATURAL_UI),
-		MDNIE_SET(AUTO_UI),
-		MDNIE_SET(AUTO_UI),
-		MDNIE_SET(AUTO_EBOOK)
-	}, {
-		MDNIE_SET(DYNAMIC_UI),
-		MDNIE_SET(STANDARD_UI),
-		MDNIE_SET(NATURAL_UI),
-		MDNIE_SET(AUTO_UI),
-		MDNIE_SET(AUTO_GALLERY),
-		MDNIE_SET(AUTO_EBOOK)
-	}, {
-		MDNIE_SET(DYNAMIC_UI),
-		MDNIE_SET(STANDARD_UI),
-		MDNIE_SET(NATURAL_UI),
-		MDNIE_SET(AUTO_UI),
+		MDNIE_SET(MOVIE_UI),
 		MDNIE_SET(AUTO_EBOOK),
 		MDNIE_SET(AUTO_EBOOK)
 	}, {

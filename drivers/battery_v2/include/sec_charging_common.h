@@ -867,7 +867,7 @@ struct sec_battery_platform_data {
 
 	/* moisture detect function support for non-water proof USB type-b models */
 	bool detect_moisture;
-
+	
 	/* fuel gauge */
 	char *fuelgauge_name;
 	int fg_irq;
@@ -939,12 +939,15 @@ struct sec_battery_platform_data {
 	/* if siop level 0, set minimum fast charging current */
 	int minimum_charging_current_by_siop_0;
 	int input_current_by_siop_20;
+	int input_current_by_siop_40;
 	int charging_current_browsing_mode;
 	
 	int wc_hero_stand_cc_cv;
 	int wc_hero_stand_cv_current;
 	int wc_hero_stand_hv_cv_current;
 
+	int default_input_current;
+	int default_charging_current;
 	int max_input_voltage;
 	int max_input_current;
 	int pre_afc_work_delay;

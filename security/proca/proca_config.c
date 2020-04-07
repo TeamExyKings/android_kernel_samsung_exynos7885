@@ -26,12 +26,12 @@
 #define PROCA_CONFIG_VERSION 3U
 #define PROCA_CONFIG_MAGIC 0xCD0436EAU
 
-static int append_sys_ram_range(phys_addr_t start, phys_addr_t end, void *arg)
+static int append_sys_ram_range(uint64_t start, uint64_t end, void *arg)
 {
 	struct proca_config *conf = arg;
 
 	PROCA_DEBUG_LOG("System RAM region %p-%p was found\n",
-			(void *)start, (void *)end);
+			(void *)(uintptr_t)start, (void *)(uintptr_t)end);
 
 	if (conf->sys_ram_ranges_num == MAX_MEMORY_RANGES_NUM) {
 		PROCA_ERROR_LOG("Unsupported number of sys ram regions %llu\n",

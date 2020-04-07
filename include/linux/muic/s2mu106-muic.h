@@ -876,6 +876,7 @@ typedef enum {
 
 typedef enum {
 	S2MU106_WATER_MUIC_IDLE,
+	S2MU106_WATER_MUIC_VERIFY,
 	S2MU106_WATER_MUIC_DET,
 	S2MU106_WATER_MUIC_CCIC_DET,
 	S2MU106_WATER_MUIC_CCIC_STABLE,
@@ -999,10 +1000,15 @@ struct s2mu106_muic_data {
 	struct mutex water_dry_mutex;
 
 	wait_queue_head_t wait;
+	wait_queue_head_t cable_wait;
 	struct notifier_block fb_notifier;
 	bool lcd_on;
 	bool is_cable_inserted;
 #endif
+#if IS_ENABLED(CONFIG_S2MU106_NONE_WATERPROOF_MODEL)
+	bool is_timeout_attached;
+#endif
+
 };
 
 extern struct muic_platform_data muic_pdata;
@@ -1033,3 +1039,4 @@ int s2mu106_muic_set_otg_reg(struct s2mu106_muic_data *muic_data, bool on);
 int s2mu106_muic_get_otg_state(void);
 #endif
 #endif /* __S2MU106_MUIC_H__ */
+

@@ -19,6 +19,9 @@
 #define SENSOR_IMX576_MAX_WIDTH          (5664 + 0)
 #define SENSOR_IMX576_MAX_HEIGHT         (4248 + 0)
 
+#define SENSOR_IMX576_25M_MAX_WIDTH          (5760 + 0)
+#define SENSOR_IMX576_25M_MAX_HEIGHT         (4312 + 0)
+
 #define SENSOR_IMX576_FINE_INTEGRATION_TIME_MIN                (0x510)
 #define SENSOR_IMX576_FINE_INTEGRATION_TIME_MAX                (0x510)
 #define SENSOR_IMX576_COARSE_INTEGRATION_TIME_MIN              (0x04)
@@ -119,6 +122,80 @@ enum sensor_imx576_mode_enum {
 	SENSOR_IMX576_2832X2124_60FPS,
 	SENSOR_IMX576_2832X1592_120FPS,
 };
+
+/*
+ * [Mode Information] 25M
+ *	- Global Setting -
+ *
+ *	- 2X2 BINNING -
+ *	[0] REG_Z : Single Still Preview (4:3)_Ver2    : 2880x2156@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[1] REG_AA: Single Still Preview (16:9)_Ver2   : 2880x1620@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[2] REG_AB: Single Still Preview (18.5:9)_Ver2 : 2880x1400@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[3] REG_AC: Single Still Preview (1:1)_Ver2    : 2156x2156@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[4] REG_AI: Single Still Preview (19.5:9)_Ver2 : 2880x1332@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *
+ *	- QBC_REMOSAIC -
+ *	[5] REG_P : Full                               : 5760x4312@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[6] REG_AD: Single Still Capture (16:9)_Ver2   : 5760x3240@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[7] REG_AE: Single Still Capture (18.5:9)_Ver2 : 5760x2800@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[8] REG_AF: Single Still Capture (1:1)_Ver2    : 4312x4312@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[9] REG_AJ: Single Still Capture (19.5:9)_Ver2 : 5760x2664@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *
+ *	- QBC_HDR -
+ *	[10]REG_AK: Single Still 3HDR (4:3)_Ver2       : 2880x2156@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[11]REG_AL: Single Still 3HDR (16:9)_Ver2      : 2880x1620@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[12]REG_AM: Single Still 3HDR (18.5:9)_Ver2    : 2880x1400@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[13]REG_AO: Single Still 3HDR (1:1)_Ver2       : 2156x2156@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[14]REG_AN: Single Still 3HDR (19.5:9)_Ver2    : 2880x1332@30,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *
+ *	- Super Slow Motion (SSM) -
+ *	[15]REG_M : Super Slow Motion (16:9)           : 1872x1052@240,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[16]REG_N : Super Slow Motion (16:9)           : 1920x1080@120,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[17]REG_O : Super Slow Motion (16:9)           : 1280x720 @240,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[18]REG_U : Super Slow Motion (16:9)           : 1280x720 @120,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *
+ *	- FAST AE -
+ *	[19]REG_R : Single Preview Fast(4:3)           : 2832x2124@117,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[20]REG_S : Single Preview Fast(4:3)           : 2832x2124@ 60,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[21]REG_T : Single Preview Fast(16:9)          : 2832x1592@120,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ *	[22]REG_AG: Single Preview Fast(4:3)_Ver2      : 2880x2156@114,  MIPI lane: 4, MIPI data rate(Mbps/lane) Sensor: 2054
+ */
+
+ enum sensor_imx576_25M_mode_enum {
+	/* 2x2 Binnig */
+	SENSOR_IMX576_25M_2X2BIN_2880X2156_30FPS = 0,
+	SENSOR_IMX576_25M_2X2BIN_2880X1620_30FPS,
+	SENSOR_IMX576_25M_2X2BIN_2880X1400_30FPS,
+	SENSOR_IMX576_25M_2X2BIN_2156X2156_30FPS,
+	SENSOR_IMX576_25M_2X2BIN_2880X1332_30FPS,
+
+	/* QBC-REMOSAIC */	
+	SENSOR_IMX576_25M_QBCREMOSAIC_5760X4312_30FPS = 5,
+	SENSOR_IMX576_25M_QBCREMOSAIC_5760X3240_30FPS,
+	SENSOR_IMX576_25M_QBCREMOSAIC_5760X2800_30FPS,
+	SENSOR_IMX576_25M_QBCREMOSAIC_4312X4312_30FPS,
+	SENSOR_IMX576_25M_QBCREMOSAIC_5760X2664_30FPS,
+
+	/* QBC-HDR */
+	SENSOR_IMX576_25M_QBCHDR_2880X2156_30FPS = 10,
+	SENSOR_IMX576_25M_QBCHDR_2880X1620_30FPS,
+	SENSOR_IMX576_25M_QBCHDR_2880X1400_30FPS,
+	SENSOR_IMX576_25M_QBCHDR_2156X2156_30FPS,
+	SENSOR_IMX576_25M_QBCHDR_2880X1332_30FPS,
+
+	/* Super Slow Motion */
+	SENSOR_IMX576_25M_SSM_1872X1052_240FPS = 15,
+	SENSOR_IMX576_25M_SSM_1920X1080_120FPS,
+	SENSOR_IMX576_25M_SSM_1280X720_240FPS,
+	SENSOR_IMX576_25M_SSM_1280X720_120FPS,
+
+	/* FAST AE */
+	SENSOR_IMX576_25M_2832X2124_117FPS = 19,
+	SENSOR_IMX576_25M_2832X2124_60FPS,
+	SENSOR_IMX576_25M_2832X1592_120FPS,
+	SENSOR_IMX576_25M_2880X2156_114FPS,
+};
+ 
 
 #endif
 

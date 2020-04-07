@@ -1171,18 +1171,23 @@ static int dadc_ev(struct snd_soc_dapm_widget *w, struct snd_kcontrol *kcontrol,
 
 static void remove_tdma_noise(struct snd_soc_codec *codec)
 {
+	struct cod3035x_priv *cod3035x = snd_soc_codec_get_drvdata(codec);
 	unsigned int mic_on;
 
 	dev_dbg(codec->dev, "%s: adc mute for remove tdma noise after jack out.\n",
 			__func__);
 
 	mic_on = snd_soc_read(codec, COD3035X_6C_MIC_ON);
-	if (!(mic_on & EN_MIC3_MASK)) {
-		dev_dbg(codec->dev, "%s: MIC3 is not enabled, returning.\n", __func__);
-	} else {
+	if (mic_on & EN_MIC3_MASK) {
 		dev_dbg(codec->dev, "%s: MIC3 is active, Boost power down.\n", __func__);
+
+		mutex_lock(&cod3035x->adc_mute_lock);
+		snd_soc_write(codec, COD3035X_44_IF1_FORMAT4, 0xFF);
+		/* disable ADC digital mute after configuring ADC */
+		cod3035x_adc_digital_mute(codec, false);
 		/* MIC3 OFF */
 		snd_soc_update_bits(codec, COD3035X_12_PD_AD2, PDB_MIC_BST3_MASK, 0);
+		mutex_unlock(&cod3035x->adc_mute_lock);
 	}
 }
 
@@ -3625,7 +3630,9 @@ int cod3035x_set_codec_jackstatus(struct snd_soc_codec* codec,
 
 	if (jackdet->ant_det) {
 		set_micbias_auto_mode(codec);
-		snd_soc_write(codec, COD3035X_98_TEST1, 0x80);
+		if (!(cod3035x->model_feature_flag & MODEL_FLAG_5PIN_ANT)) {
+			snd_soc_write(codec, COD3035X_98_TEST1, 0x80);
+		}
 		snd_soc_write(codec, COD3035X_93_CTR_DLY6, 0x00);
 		snd_soc_write(codec, COD3035X_94_JACK_CTR, 0x00);
 		dev_dbg(codec->dev, "%s Ext Antenna inserted\n", __func__);
@@ -5039,6 +5046,9 @@ static int cod3035x_notifier_handler(struct notifier_block *nb,
 		/* IRQ masking off */
 		snd_soc_write(codec, COD3035X_05_IRQ1M, 0x00);
 		snd_soc_write(codec, COD3035X_06_IRQ2M, 0x00);
+		/* HP OVP OFF */
+		snd_soc_update_bits(codec, COD3035X_3E_OVP_2,
+				OVP_APON_MASK, 0);
 		/* Jack out */
 		snd_soc_write(codec, COD3035X_93_CTR_DLY6, 0x00);
 		/* Impedance value reset */

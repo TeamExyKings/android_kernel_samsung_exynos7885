@@ -451,18 +451,6 @@ static void superblock_free_security(struct super_block *sb)
 	kfree(sbsec);
 }
 
-/* The file system's label must be initialized prior to use. */
-
-static const char *labeling_behaviors[7] = {
-	"uses xattr",
-	"uses transition SIDs",
-	"uses task SIDs",
-	"uses genfs_contexts",
-	"not configured for labeling",
-	"uses mountpoint labeling",
-	"uses native labeling",
-};
-
 static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dentry);
 
 static inline int inode_doinit(struct inode *inode)
@@ -574,10 +562,6 @@ static int sb_finish_set_opts(struct super_block *sb)
 			goto out;
 		}
 	}
-
-	if (sbsec->behavior > ARRAY_SIZE(labeling_behaviors))
-		printk(KERN_ERR "SELinux: initialized (dev %s, type %s), unknown behavior\n",
-		       sb->s_id, sb->s_type->name);
 
 	sbsec->flags |= SE_SBINITIALIZED;
 	if (selinux_is_sblabel_mnt(sb))
@@ -860,6 +844,9 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 	if (!strcmp(sb->s_type->name, "debugfs") ||
 	    !strcmp(sb->s_type->name, "tracefs") ||
 	    !strcmp(sb->s_type->name, "sysfs") ||
+		// [ SEC_SELINUX_PORTING_COMMON
+		!strcmp(sb->s_type->name, "configfs") ||
+		// ] SEC_SELINUX_PORTING_COMMON
 	    !strcmp(sb->s_type->name, "pstore"))
 		sbsec->flags |= SE_SBGENFS;
 
@@ -1528,6 +1515,9 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 				kfree(context);
 				/* Leave with the unlabeled SID */
 				rc = 0;
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+				BUG_ON(1);
+#endif
 				break;
 			}
 		}
@@ -1840,6 +1830,13 @@ static int selinux_determine_inode_label(const struct inode *dir,
 	const struct superblock_security_struct *sbsec = dir->i_sb->s_security;
 	const struct inode_security_struct *dsec = dir->i_security;
 	const struct task_security_struct *tsec = current_security();
+	int rc = 0;
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+	char *context, *context2;
+	u32 context_len, context_len2;
+	int rc1, rc2;
+	rc1 = security_sid_to_context_force(dsec->sid, &context, &context_len);
+#endif
 
 	if ((sbsec->flags & SE_SBINITIALIZED) &&
 	    (sbsec->behavior == SECURITY_FS_USE_MNTPOINT)) {
@@ -1848,11 +1845,26 @@ static int selinux_determine_inode_label(const struct inode *dir,
 		   tsec->create_sid) {
 		*_new_isid = tsec->create_sid;
 	} else {
-		return security_transition_sid(tsec->sid, dsec->sid, tclass,
+		rc = security_transition_sid(tsec->sid, dsec->sid, tclass,
 					       name, _new_isid);
 	}
 
-	return 0;
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+	rc2 = security_sid_to_context_force(*_new_isid, &context2, &context_len2);
+	if (!rc1 && !rc2) {
+		if (strstr(context, "data_file") && strstr(context2, "unlabeled")) {
+			printk("[KT] %s / context : %s, context2 : %s\n", __func__, context, context2);
+			BUG_ON(1);
+		}
+		if (strstr(context, "data_file") && *_new_isid == SECINITSID_UNLABELED) {
+			printk("[KT] _new_isid is UNLABELED\n");
+			BUG_ON(1);
+		}
+	}
+	if (!rc1) kfree(context);
+	if (!rc2) kfree(context2);
+#endif
+	return rc;
 }
 
 /* Check whether a task can create a file. */
@@ -2078,8 +2090,9 @@ static inline u32 file_to_av(struct file *file)
 static inline u32 open_file_to_av(struct file *file)
 {
 	u32 av = file_to_av(file);
+	struct inode *inode = file_inode(file);
 
-	if (selinux_policycap_openperm)
+	if (selinux_policycap_openperm && inode->i_sb->s_magic != SOCKFS_MAGIC)
 		av |= FILE__OPEN;
 
 	return av;
@@ -3078,6 +3091,7 @@ static int selinux_inode_permission(struct inode *inode, int mask)
 static int selinux_inode_setattr(struct dentry *dentry, struct iattr *iattr)
 {
 	const struct cred *cred = current_cred();
+	struct inode *inode = d_backing_inode(dentry);
 	unsigned int ia_valid = iattr->ia_valid;
 	__u32 av = FILE__WRITE;
 
@@ -3093,8 +3107,10 @@ static int selinux_inode_setattr(struct dentry *dentry, struct iattr *iattr)
 			ATTR_ATIME_SET | ATTR_MTIME_SET | ATTR_TIMES_SET))
 		return dentry_has_perm(cred, dentry, FILE__SETATTR);
 
-	if (selinux_policycap_openperm && (ia_valid & ATTR_SIZE)
-			&& !(ia_valid & ATTR_FILE))
+	if (selinux_policycap_openperm &&
+	    inode->i_sb->s_magic != SOCKFS_MAGIC &&
+	    (ia_valid & ATTR_SIZE) &&
+	    !(ia_valid & ATTR_FILE))
 		av |= FILE__OPEN;
 
 	return dentry_has_perm(cred, dentry, av);
@@ -3135,6 +3151,11 @@ static int selinux_inode_setxattr(struct dentry *dentry, const char *name,
 	struct common_audit_data ad;
 	u32 newsid, sid = current_sid();
 	int rc = 0;
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+	int rc1, rc2;
+	char *context, *context2;
+	u32 context_len, context_len2;
+#endif
 
 	if (strcmp(name, XATTR_NAME_SELINUX))
 		return selinux_inode_setotherxattr(dentry, name);
@@ -3153,6 +3174,10 @@ static int selinux_inode_setxattr(struct dentry *dentry, const char *name,
 			  FILE__RELABELFROM, &ad);
 	if (rc)
 		return rc;
+
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+	rc1 = security_sid_to_context_force(isec->sid, &context, &context_len);
+#endif
 
 	rc = security_context_to_sid(value, size, &newsid, GFP_KERNEL);
 	if (rc == -EINVAL) {
@@ -3178,22 +3203,53 @@ static int selinux_inode_setxattr(struct dentry *dentry, const char *name,
 			audit_log_n_untrustedstring(ab, value, audit_size);
 			audit_log_end(ab);
 
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+			if (!rc1) kfree(context);
+#endif
 			return rc;
 		}
 		rc = security_context_to_sid_force(value, size, &newsid);
 	}
-	if (rc)
+	if (rc) {
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+		if (!rc1) kfree(context);
+#endif
 		return rc;
+	}
 
 	rc = avc_has_perm(sid, newsid, isec->sclass,
 			  FILE__RELABELTO, &ad);
-	if (rc)
+	if (rc) {
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+		if (!rc1) kfree(context);
+#endif
 		return rc;
+	}
 
 	rc = security_validate_transition(isec->sid, newsid, sid,
 					  isec->sclass);
-	if (rc)
+	if (rc) {
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+		if (!rc1) kfree(context);
+#endif
 		return rc;
+	}
+
+#ifdef CONFIG_SECURITY_DEBUG_UNLABELED
+	rc2 = security_sid_to_context_force(newsid, &context2, &context_len2);
+	if (!rc1 && !rc2) {
+		if (strstr(context, "data_file") && strstr(context2, "unlabeled")) {
+			printk("[KT] %s / context : %s, context2 : %s\n", __func__, context, context2);
+			BUG_ON(1);
+		}
+		if (strstr(context, "data_file") && newsid == SECINITSID_UNLABELED) {
+			printk("[KT] _new_isid is UNLABELED\n");
+			BUG_ON(1);
+		}
+	}
+	if (!rc1) kfree(context);
+	if (!rc2) kfree(context2);
+#endif
 
 	return avc_has_perm(newsid,
 			    sbsec->sid,
@@ -4225,6 +4281,8 @@ static int sock_has_perm(struct task_struct *task, struct sock *sk, u32 perms)
 	struct lsm_network_audit net = {0,};
 	u32 tsid = task_sid(task);
 
+	if (!sksec)
+		return -EFAULT;
 	if (sksec->sid == SECINITSID_KERNEL)
 		return 0;
 
@@ -4315,10 +4373,18 @@ static int selinux_socket_bind(struct socket *sock, struct sockaddr *address, in
 		u32 sid, node_perm;
 
 		if (family == PF_INET) {
+			if (addrlen < sizeof(struct sockaddr_in)) {
+				err = -EINVAL;
+				goto out;
+			}
 			addr4 = (struct sockaddr_in *)address;
 			snum = ntohs(addr4->sin_port);
 			addrp = (char *)&addr4->sin_addr.s_addr;
 		} else {
+			if (addrlen < SIN6_LEN_RFC2133) {
+				err = -EINVAL;
+				goto out;
+			}
 			addr6 = (struct sockaddr_in6 *)address;
 			snum = ntohs(addr6->sin6_port);
 			addrp = (char *)&addr6->sin6_addr.s6_addr;

@@ -288,7 +288,7 @@ int set_new_trj_ref_angle(struct s610_radio *radio, int tune_freq, int spur_freq
 		int quotient;
 		int small, big;
 		int spur_harmonic;
-		int temp_diff;			
+		int temp_diff;
 
 		quotient = tune_freq / spur_freq[i];
 		small = (spur_freq[i] * quotient);
@@ -429,7 +429,7 @@ void fm_set_freq(struct s610_radio *radio, u32 freq, bool mix_hi)
 
 			int ret;
 			int spur_freq[2] = {320, 768};
-			ret = set_new_trj_ref_angle(radio, radio->low->fm_state.freq, 
+			ret = set_new_trj_ref_angle(radio, radio->low->fm_state.freq,
 				spur_freq, sizeof(spur_freq) / sizeof(int));
 			if (NEW_TRF_ENABLE & ret) {
 				fmspeedy_set_reg_field(0xFFF2A9, 16, (0x000F<<16), 0x2);
@@ -1753,6 +1753,14 @@ static void fm_tuner_control_mute(struct s610_radio *radio)
 	bool mute = radio->low->fm_state.mute_forced
 			|| radio->low->fm_state.mute_audio
 			|| (!radio->low->fm_tuner_state.tune_done);
+
+	if (mute)
+		fmspeedy_set_reg(0xFFF2CA, 0x2516);
+	else
+		fmspeedy_set_reg(0xFFF2CA, radio->low->fm_config.mute_coeffs_soft);
+
+	udelay(100);
+
 	fm_set_mute(mute);
 }
 
@@ -2519,7 +2527,7 @@ fm_tuner_state_s low_fm_tuner_state_init = {
 		.band_limit_hi = 108000
 };
 
-fm_band_s fm_bands_init[] = { { 87500, 108000 }, { 76000, 90000 } };
+fm_band_s fm_bands_init[] = { { 87500, 108000 }, { 76000, 90000 }, {76000, 108000} };
 u16 fm_freq_steps_init[] = { 50, 100, 200 };
 #ifdef USE_SPUR_CANCEL
 extern u32 *fm_spur_init;
@@ -2542,7 +2550,7 @@ int init_low_struc(struct s610_radio *radio)
 	memcpy(&radio->low->fm_state, &low_fm_state_init, sizeof(fm_state_s));
 	memcpy(&radio->low->fm_tuner_state, &low_fm_tuner_state_init,
 			sizeof(fm_tuner_state_s));
-	memcpy(&radio->low->fm_bands, &fm_bands_init, sizeof(fm_band_s) * 2);
+	memcpy(&radio->low->fm_bands, &fm_bands_init, sizeof(fm_band_s) * 3);
 	memcpy(&radio->low->fm_freq_steps,
 			&fm_freq_steps_init, sizeof(u16) * 3);
 	if (radio->sw_mute_weak) {

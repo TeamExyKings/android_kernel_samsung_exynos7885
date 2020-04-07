@@ -213,6 +213,64 @@ void f2fs_msg(struct super_block *sb, const char *level, const char *fmt, ...)
 	va_end(args);
 }
 
+void f2fs_set_sb_extra_flag(struct f2fs_sb_info *sbi, int flag)
+{
+	struct f2fs_super_block *fsb = sbi->raw_super;
+	unsigned long long extra_flag_blk_no = le32_to_cpu(fsb->cp_blkaddr) - 1;
+
+	struct buffer_head *bh;
+	struct f2fs_sb_extra_flag_blk *extra_blk;
+
+	if (extra_flag_blk_no < 2) {
+		// 0 -> SB 0, 1 -> SB 1, 
+		// 2 or more : RSVD
+		f2fs_msg(sbi->sb, KERN_WARNING, 
+				"extra_flag: No free blks for extra flags");
+		return;
+	}
+
+	bh = sb_bread(sbi->sb, (sector_t)extra_flag_blk_no);
+	if(!bh) {
+		f2fs_msg(sbi->sb, KERN_WARNING, 
+				"extra_flag: Fail to allocate buffer_head");
+		return;
+	}
+
+	lock_buffer(bh);
+	extra_blk = (struct f2fs_sb_extra_flag_blk*)bh->b_data;
+
+	switch(flag) {
+	case F2FS_SEC_EXTRA_FSCK_MAGIC:
+		if (extra_blk->need_fsck == 
+				cpu_to_le32(F2FS_SEC_EXTRA_FSCK_MAGIC))
+			goto out_unlock;
+
+		extra_blk->need_fsck = cpu_to_le32(F2FS_SEC_EXTRA_FSCK_MAGIC);
+		break;
+	default:
+		f2fs_msg(sbi->sb, KERN_WARNING, 
+				"extra_flag: Undefined flag - %x", flag);
+		goto out_unlock;
+	}
+	
+	set_buffer_uptodate(bh);
+	set_buffer_dirty(bh);
+	unlock_buffer(bh);
+
+	if (__sync_dirty_buffer(bh, REQ_SYNC | REQ_FUA))
+		f2fs_msg(sbi->sb, KERN_WARNING, "extra_flag: EIO");
+
+	brelse(bh);
+
+	return;
+
+out_unlock:
+	unlock_buffer(bh);
+	brelse(bh);
+
+	return;
+}
+
 static inline void limit_reserve_root(struct f2fs_sb_info *sbi)
 {
 	block_t limit = sbi->user_block_count / 100;
@@ -887,6 +945,9 @@ static struct inode *f2fs_alloc_inode(struct super_block *sb)
 	init_once((void *) fi);
 
 	/* Initialize f2fs-specific inode info */
+	/* F2FS doesn't write value of i_version to disk and
+	   it will be reinitialize after a reboot.*/
+	fi->vfs_inode.i_version = 1;
 	atomic_set(&fi->dirty_pages, 0);
 	init_rwsem(&fi->i_sem);
 	INIT_LIST_HEAD(&fi->dirty_list);
@@ -1064,7 +1125,7 @@ static void f2fs_put_super(struct super_block *sb)
 	}
 
 	/* be sure to wait for any on-going discard commands */
-	dropped = f2fs_wait_discard_bios(sbi);
+	dropped = f2fs_issue_discard_timeout(sbi);
 
 	if ((f2fs_hw_support_discard(sbi) || f2fs_hw_should_discard(sbi)) &&
 					!sbi->discard_blks && !dropped) {
@@ -1453,7 +1514,8 @@ static void default_options(struct f2fs_sb_info *sbi)
 	set_opt(sbi, NOHEAP);
 	sbi->sb->s_flags |= MS_LAZYTIME;
 	clear_opt(sbi, DISABLE_CHECKPOINT);
-	set_opt(sbi, FLUSH_MERGE);
+	/* P190412-00841 disable flush_merge by default */
+	//set_opt(sbi, FLUSH_MERGE);
 	set_opt(sbi, DISCARD);
 	if (f2fs_sb_has_blkzoned(sbi->sb))
 		set_opt_mode(sbi, F2FS_MOUNT_LFS);
@@ -1481,19 +1543,16 @@ static int f2fs_disable_checkpoint(struct f2fs_sb_info *sbi)
 
 	sbi->sb->s_flags |= MS_ACTIVE;
 
-	mutex_lock(&sbi->gc_mutex);
 	f2fs_update_time(sbi, DISABLE_TIME);
 
 	while (!f2fs_time_over(sbi, DISABLE_TIME)) {
+		mutex_lock(&sbi->gc_mutex);
 		err = f2fs_gc(sbi, true, false, NULL_SEGNO);
 		if (err == -ENODATA)
 			break;
-		if (err && err != -EAGAIN) {
-			mutex_unlock(&sbi->gc_mutex);
+		if (err && err != -EAGAIN)
 			return err;
-		}
 	}
-	mutex_unlock(&sbi->gc_mutex);
 
 	err = sync_filesystem(sbi->sb);
 	if (err)
@@ -2729,6 +2788,8 @@ static void init_sb_info(struct f2fs_sb_info *sbi)
 	sbi->interval_time[DISCARD_TIME] = DEF_IDLE_INTERVAL;
 	sbi->interval_time[GC_TIME] = DEF_IDLE_INTERVAL;
 	sbi->interval_time[DISABLE_TIME] = DEF_DISABLE_INTERVAL;
+	sbi->interval_time[UMOUNT_DISCARD_TIMEOUT] =
+				DEF_UMOUNT_DISCARD_TIMEOUT;
 	clear_sbi_flag(sbi, SBI_NEED_FSCK);
 
 	for (i = 0; i < NR_COUNT_TYPE; i++)
@@ -3161,6 +3222,9 @@ try_onemore:
 	sb->s_time_gran = 1;
 	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
 		(test_opt(sbi, POSIX_ACL) ? MS_POSIXACL : 0);
+#ifdef CONFIG_FIVE
+	sb->s_flags |= MS_I_VERSION;
+#endif
 	memcpy(sb->s_uuid, raw_super->uuid, sizeof(raw_super->uuid));
 	sb->s_iflags |= SB_I_CGROUPWB;
 

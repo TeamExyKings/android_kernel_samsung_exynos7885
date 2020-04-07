@@ -265,6 +265,7 @@ extern void sec_debug_set_extra_info_batt(int cap, int volt, int temp, int curr)
 extern void sec_debug_set_extra_info_ufs_error(char *str);
 extern void sec_debug_set_extra_info_zswap(char *str);
 extern void sec_debug_set_extra_info_mfc_error(char *str);
+extern void sec_debug_set_extra_info_aud(char *str);
 
 #else
 
@@ -294,6 +295,7 @@ extern void sec_debug_set_extra_info_mfc_error(char *str);
 #define sec_debug_set_extra_info_ufs_error(a)	do { } while (0)
 #define sec_debug_set_extra_info_zswap(a)	do { } while (0)
 #define sec_debug_set_extra_info_mfc_error(a)	do { } while (0)
+#define sec_debug_set_extra_info_aud(a)	do { } while (0)
 
 #endif /* CONFIG_SEC_DEBUG_EXTRA_INFO */
 
@@ -302,6 +304,10 @@ extern void sec_debug_auto_summary_log_disable(int type);
 extern void sec_debug_auto_summary_log_once(int type);
 extern void register_set_auto_comm_buf(void (*func)(int type, const char *buf, size_t size));
 extern void register_set_auto_comm_lastfreq(void (*func)(int type, int old_freq, int new_freq, u64 time));
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_INIT_LOG
+extern void register_init_log_hook_func(void (*func)(const char *buf, size_t size));
 #endif
 
 #ifdef CONFIG_SEC_DEBUG_LAST_KMSG
@@ -485,6 +491,10 @@ extern void sec_debug_summary_set_kallsyms_info(struct sec_debug_summary *summar
 int sec_debug_save_cpu_info(void);
 int sec_debug_save_die_info(const char *str, struct pt_regs *regs);
 int sec_debug_save_panic_info(const char *str, unsigned long caller);
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_LIMIT_BACKTRACE
+#define MAX_UNWINDING_LOOP 50 /* maximum number of unwind frame */
 #endif
 
 #endif /* SEC_DEBUG_H */

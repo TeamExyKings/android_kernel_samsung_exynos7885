@@ -46,35 +46,54 @@
 #define LDI_GPARA_ELVSS_NORMAL			7	/* B7h 8th Para */
 #define LDI_GPARA_ELVSS_HBM			8	/* B7h 9th Para */
 
-#define	LDI_REG_RDDPM		0x0A	/* Read Display Power Mode */
-#define	LDI_LEN_RDDPM		1
+struct bit_info {
+	unsigned int reg;
+	unsigned int len;
+	char **print;
+	unsigned int expect;
+	unsigned int invert;
+	unsigned int mask;
+	unsigned int result;
+};
 
-#define	LDI_REG_RDDSM		0x0E	/* Read Display Signal Mode */
-#define	LDI_LEN_RDDSM		1
+enum {
+	LDI_BIT_ENUM_05,	LDI_BIT_ENUM_RDNUMED = LDI_BIT_ENUM_05,
+	LDI_BIT_ENUM_0A,	LDI_BIT_ENUM_RDDPM = LDI_BIT_ENUM_0A,
+	LDI_BIT_ENUM_0E,	LDI_BIT_ENUM_RDDSM = LDI_BIT_ENUM_0E,
+	LDI_BIT_ENUM_0F,	LDI_BIT_ENUM_RDDSDR = LDI_BIT_ENUM_0F,
+	LDI_BIT_ENUM_MAX
+};
 
-#ifdef CONFIG_DISPLAY_USE_INFO
-#define	LDI_REG_RDNUMPE		0x05		/* DPUI_KEY_PNDSIE: Read Number of the Errors on DSI */
-#define	LDI_LEN_RDNUMPE		1
-#define LDI_PNDSIE_MASK		(GENMASK(6, 0))
+char *LDI_BIT_DESC_05[BITS_PER_BYTE] = {
+	[0 ... 6] = "number of corrupted packets",
+	[7] = "overflow on number of corrupted packets",
+};
 
-/*
- * ESD_ERROR[0] =  MIPI DSI error is occurred by ESD.
- * ESD_ERROR[1] =  HS CLK lane error is occurred by ESD.
- * ESD_ERROR[2] =  VLIN3 error is occurred by ESD.
- * ESD_ERROR[3] =  ELVDD error is occurred by ESD.
- * ESD_ERROR[4]  = CHECK_SUM error is occurred by ESD.
- * ESD_ERROR[5] =  Internal HSYNC error is occurred by ESD.
- * ESD_ERROR[6] =  VLIN1 error is occurred by ESD
- */
-#define LDI_REG_ESDERR		0xEE		/* DPUI_KEY_PNELVDE, DPUI_KEY_PNVLI1E, DPUI_KEY_PNVLO3E, DPUI_KEY_PNESDE */
-#define LDI_LEN_ESDERR		1
-#define LDI_PNELVDE_MASK	(BIT(3))	/* ELVDD error */
-#define LDI_PNVLI1E_MASK	(BIT(6))	/* VLIN1 error */
-#define LDI_PNVLO3E_MASK	(BIT(2))	/* VLIN3 error */
-#define LDI_PNESDE_MASK		(BIT(2) | BIT(3) | BIT(6))
+char *LDI_BIT_DESC_0A[BITS_PER_BYTE] = {
+	[2] = "Display is Off",
+	[7] = "Booster has a fault",
+};
 
-#define LDI_REG_RDDSDR		0x0F		/* DPUI_KEY_PNSDRE: Read Display Self-Diagnostic Result */
-#define LDI_LEN_RDDSDR		1
+char *LDI_BIT_DESC_0E[BITS_PER_BYTE] = {
+	[0] = "Error on DSI",
+};
+
+char *LDI_BIT_DESC_0F[BITS_PER_BYTE] = {
+	[7] = "Register Loading Detection",
+};
+
+struct bit_info ldi_bit_info_list[LDI_BIT_ENUM_MAX] = {
+	[LDI_BIT_ENUM_05] = {0x05, 1, LDI_BIT_DESC_05, 0x00, },
+	[LDI_BIT_ENUM_0A] = {0x0A, 1, LDI_BIT_DESC_0A, 0x9C, .invert = (BIT(2) | BIT(7)), },
+	[LDI_BIT_ENUM_0E] = {0x0E, 1, LDI_BIT_DESC_0E, 0x80, },
+	[LDI_BIT_ENUM_0F] = {0x0F, 1, LDI_BIT_DESC_0F, 0xC0, .invert = (BIT(7)), },
+};
+
+#if defined(CONFIG_DISPLAY_USE_INFO)
+#define LDI_LEN_RDNUMED		1		/* DPUI_KEY_PNDSIE: Read Number of the Errors on DSI */
+#define LDI_PNDSIE_MASK		(GENMASK(7, 0))
+
+#define LDI_LEN_RDDSDR		1		/* DPUI_KEY_PNSDRE: Read Display Self-Diagnostic Result */
 #define LDI_PNSDRE_MASK		(BIT(7))	/* D7: REG_DET: Register Loading Detection */
 #endif
 
@@ -130,19 +149,17 @@ static unsigned char SEQ_PAGE_ADDR_SET[] = {
 	0x00, 0x00, 0x09, 0x23
 };
 
-#if defined(CONFIG_EXYNOS_DECON_LCD_A30_DTV_MIPI)
-static unsigned char SEQ_FFC_SET[] = {
+static unsigned char SEQ_FFC_SET_1100[] = {
 	0xE9,
 	0x11, 0x55, 0xA6, 0x75, 0xA3, 0xB2, 0x41, 0xC3, 0x00, 0x1A,
 	0xB8		/* MIPI Speed 1.1Gbps */
 };
-#else
+
 static unsigned char SEQ_FFC_SET[] = {
 	0xE9,
 	0x11, 0x55, 0x98, 0x96, 0x80, 0xB2, 0x41, 0xC3, 0x00, 0x1A,
 	0xB8		/* MIPI Speed 1.2Gbps */
 };
-#endif
 
 static unsigned char SEQ_ERR_FG_SET[] = {
 	0xE1,
@@ -153,12 +170,6 @@ static unsigned char SEQ_ERR_FG_SET[] = {
 static unsigned char SEQ_VSYNC_SET[] = {
 	0xE0,
 	0x01		/* Vsync Enable */
-};
-
-static unsigned char SEQ_ASWIRE_OFF[] = {
-	0xD5,
-	0x83, 0xFF, 0x5C, 0x44, 0x89, 0x89, 0x00, 0x00, 0x00, 0x00,
-	0x00
 };
 
 static unsigned char SEQ_ELVSS_SET[] = {
@@ -252,7 +263,6 @@ static unsigned char SEQ_HLPM_AOR_60[] = {
 };
 #endif
 
-#if defined(CONFIG_SEC_FACTORY)
 static unsigned char SEQ_XTALK_B0[] = {
 	0xB0,
 	0x1C
@@ -268,19 +278,32 @@ static unsigned char SEQ_XTALK_OFF[] = {
 	0xC0
 };
 
+#if defined(CONFIG_SEC_FACTORY)
 static unsigned char SEQ_FD_ON[] = {
 	0xD5,
-	0x01
+	0x01	/* FD enable */
 };
 
 static unsigned char SEQ_FD_OFF[] = {
 	0xD5,
-	0x02
+	0x02	/* FD disable */
+};
+
+static unsigned char SEQ_ASWIRE_OFF[] = {
+	0xD5,
+	0x83, 0xFF, 0x5C, 0x44, 0x89, 0x89, 0x00, 0x00, 0x00, 0x01,	/* 10th para 0x01 FD enable */
+	0x00
 };
 
 static unsigned char SEQ_GPARA_FD[] = {
 	0xB0,
 	0x09
+};
+#else
+static unsigned char SEQ_ASWIRE_OFF[] = {
+	0xD5,
+	0x83, 0xFF, 0x5C, 0x44, 0x89, 0x89, 0x00, 0x00, 0x00, 0x00,	/* 10th para 0x00 FD Normal */
+	0x00
 };
 #endif
 

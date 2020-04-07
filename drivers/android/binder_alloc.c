@@ -326,11 +326,12 @@ err_no_vma:
 	return vma ? -ENOMEM : -ESRCH;
 }
 
-struct binder_buffer *binder_alloc_new_buf_locked(struct binder_alloc *alloc,
-						  size_t data_size,
-						  size_t offsets_size,
-						  size_t extra_buffers_size,
-						  int is_async)
+static struct binder_buffer *binder_alloc_new_buf_locked(
+				struct binder_alloc *alloc,
+				size_t data_size,
+				size_t offsets_size,
+				size_t extra_buffers_size,
+				int is_async)
 {
 	struct rb_node *n = alloc->free_buffers.rb_node;
 	struct binder_buffer *buffer;
@@ -668,7 +669,7 @@ int binder_alloc_mmap_handler(struct binder_alloc *alloc,
 		goto err_already_mapped;
 	}
 
-	area = get_vm_area(vma->vm_end - vma->vm_start, VM_IOREMAP);
+	area = get_vm_area(vma->vm_end - vma->vm_start, VM_ALLOC);
 	if (area == NULL) {
 		ret = -ENOMEM;
 		failure_string = "get_vm_area";

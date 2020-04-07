@@ -350,7 +350,7 @@ u32 dsim_reg_payload_fifo_is_empty(u32 id);
 void dsim_reg_clear_int(u32 id, u32 int_src);
 void dsim_reg_set_fifo_ctrl(u32 id, u32 cfg);
 void dsim_reg_enable_shadow_read(u32 id, u32 en);
-bool dsim_reg_is_writable_ph_fifo_state(u32 id);
+bool dsim_reg_is_writable_ph_fifo_state(u32 id, struct decon_lcd *lcd_info);
 void dsim_reg_wr_tx_header(u32 id, u32 data_id, unsigned long data0, u32 data1, u32 bta_type);
 void dsim_set_bist(u32 id, u32 en);
 void dsim_reg_set_partial_update(u32 id, struct decon_lcd *lcd_info);

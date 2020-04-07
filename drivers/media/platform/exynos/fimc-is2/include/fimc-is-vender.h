@@ -25,6 +25,11 @@
 #define VENDER_S_CTRL 0
 #define VENDER_G_CTRL 0
 
+#define SENSOR_RESET_LOW		"sen_rst low"
+#define SENSOR_RESET_HIGH		"sen_rst high"
+#define SENSOR_MCLK_PIN			"pin"
+#define SENSOR_SET_DELAY		"delay"
+
 struct fimc_is_vender {
 	char fw_path[FIMC_IS_PATH_LEN];
 	char request_fw_path[FIMC_IS_PATH_LEN];
@@ -81,7 +86,7 @@ enum {
 #endif
 
 #ifdef USE_CAMERA_HW_BIG_DATA
-#define CAM_HW_ERR_CNT_FILE_PATH "/data/camera/camera_hw_err_cnt.dat"
+#define CAM_HW_ERR_CNT_FILE_PATH "/data/vendor/camera/camera_hw_err_cnt.dat"
 
 struct cam_hw_param {
 	u32 i2c_sensor_err_cnt;

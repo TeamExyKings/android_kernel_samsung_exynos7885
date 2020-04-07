@@ -563,6 +563,9 @@ struct s2mu004_muic_data {
 	struct delayed_work water_detect_handler;
 	struct delayed_work water_dry_handler;
 	struct delayed_work sleep_dry_checker;
+#if IS_ENABLED(CONFIG_S2MU004_NONE_WATERPROOF_MODEL)
+	struct delayed_work bad_cable_checker;
+#endif
 	struct delayed_work afc_mrxrdy;
 
 	struct notifier_block pdic_nb;

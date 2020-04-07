@@ -32,7 +32,7 @@
 #define __FS_HAS_ENCRYPTION IS_ENABLED(CONFIG_F2FS_FS_ENCRYPTION)
 #include <linux/fscrypt.h>
 
-#ifdef CONFIG_F2FS_CHECK_FS
+#ifdef CONFIG_F2FS_STRICT_BUG_ON
 #define	BUG_ON_CHKFS	BUG_ON
 #else
 #define	BUG_ON_CHKFS	WARN_ON
@@ -44,13 +44,14 @@ extern int ignore_fs_panic;
 	do {									\
 		if (unlikely(condition)) {					\
 			if (is_sbi_flag_set(sbi, SBI_POR_DOING)) {		\
-				WARN_ON(1);					\
 				set_sbi_flag(sbi, SBI_NEED_FSCK);		\
 				sbi->sec_stat.fs_por_error++;			\
-			} else {						\
-				BUG_ON_CHKFS(!ignore_fs_panic);			\
-				set_sbi_flag(sbi, SBI_NEED_FSCK);		\
+				WARN_ON(1);					\
+			} else if (unlikely(!ignore_fs_panic)) {		\
+				f2fs_set_sb_extra_flag(sbi,			\
+						F2FS_SEC_EXTRA_FSCK_MAGIC);	\
 				sbi->sec_stat.fs_error++;			\
+				BUG_ON_CHKFS(1);				\
 			}							\
 		}								\
 	} while (0)
@@ -215,11 +216,6 @@ static inline bool wq_has_sleeper(wait_queue_head_t *wq)
 	return waitqueue_active(wq);
 }
 
-static inline void inode_nohighmem(struct inode *inode)
-{
-	mapping_set_gfp_mask(inode->i_mapping, GFP_USER);
-}
-
 /**
  * current_time - Return FS time
  * @inode: inode.
@@ -273,6 +269,7 @@ enum {
 #define DEF_CP_INTERVAL			60	/* 60 secs */
 #define DEF_IDLE_INTERVAL		5	/* 5 secs */
 #define DEF_DISABLE_INTERVAL		5	/* 5 secs */
+#define DEF_UMOUNT_DISCARD_TIMEOUT	5	/* 5 secs */
 
 struct cp_control {
 	int reason;
@@ -392,6 +389,7 @@ struct discard_policy {
 	bool sync;			/* submit discard with REQ_SYNC flag */
 	bool ordered;			/* issue discard by lba order */
 	unsigned int granularity;	/* discard granularity */
+	int timeout;			/* discard timeout for put_super */
 };
 
 struct discard_cmd_control {
@@ -1154,6 +1152,7 @@ enum cp_reason_type {
 	CP_FASTBOOT_MODE,
 	CP_SPEC_LOG_NUM,
 	CP_RECOVER_DIR,
+	NR_CP_REASON,
 };
 
 enum iostat_type {
@@ -1258,6 +1257,7 @@ enum {
 	DISCARD_TIME,
 	GC_TIME,
 	DISABLE_TIME,
+	UMOUNT_DISCARD_TIMEOUT,
 	MAX_TIME,
 };
 
@@ -1292,6 +1292,13 @@ enum fsync_mode {
 #define DUMMY_ENCRYPTION_ENABLED(sbi) (0)
 #endif
 
+enum sec_stat_cp_type {
+	STAT_CP_ALL,
+	STAT_CP_BG,
+	STAT_CP_FSYNC,
+	NR_STAT_CP,
+};
+
 struct f2fs_sec_stat_info {
 	u64 gc_count[2];		/* FG_GC, BG_GC */
 	u64 gc_node_seg_count[2];
@@ -1300,7 +1307,8 @@ struct f2fs_sec_stat_info {
 	u64 gc_data_blk_count[2];
 	u64 gc_ttime[2];
 
-	u64 cp_cnt[3];			/* total, balance, fsync */
+	u64 cp_cnt[NR_STAT_CP];		/* total, balance, fsync */
+	u64 cpr_cnt[NR_CP_REASON];	/* cp reason by fsync */
 	u64 cp_max_interval;		/* max checkpoint interval */
 	u64 alloc_seg_type[2];		/* LFS, SSR */
 	u64 alloc_blk_count[2];
@@ -1309,6 +1317,7 @@ struct f2fs_sec_stat_info {
 	u64 fsync_dirty_pages;
 	u64 hot_file_written_blocks;	/* db, db-journal, db-wal, db-shm */
 	u64 cold_file_written_blocks;
+	u64 warm_file_written_blocks;
 
 	u64 max_inmem_pages;		/* get_pages(sbi, F2FS_INMEM_PAGES) */
 	u64 drop_inmem_all;
@@ -1576,6 +1585,18 @@ static inline unsigned int f2fs_time_to_wait(struct f2fs_sb_info *sbi,
 }
 
 /*
+ * SEC Specific Patch
+ * <------ SB -----><----------- CP -------------><-------- .... ----->
+ * [SB0][SB1]....[ ][CP1][CP Payload...]...[CP2]....
+ *                ^ (cp_blkaddr - 1) Reserved block for extra flags
+ * - struct f2fs_sb_extra_flag_blk
+ *   - need_fsck : force fsck request flags - F2FS_SEC_EXTRA_FSC_MAGIC
+ *   - spo_counter : count by fsck (!CP_UMOUNT)
+ *   - rsvd
+ */
+void f2fs_set_sb_extra_flag(struct f2fs_sb_info *sbi, int flag);
+
+/*
  * Inline functions
  */
 static inline u32 __f2fs_crc32(struct f2fs_sb_info *sbi, u32 crc,
@@ -1782,7 +1803,11 @@ static inline void disable_nat_bits(struct f2fs_sb_info *sbi, bool lock)
 {
 	unsigned long flags;
 
-	set_sbi_flag(sbi, SBI_NEED_FSCK);
+	/*
+	 * In order to re-enable nat_bits we need to call fsck.f2fs by
+	 * set_sbi_flag(sbi, SBI_NEED_FSCK). But it may give huge cost,
+	 * so let's rely on regular fsck or unclean shutdown.
+	 */
 
 	if (lock)
 		spin_lock_irqsave(&sbi->cp_lock, flags);
@@ -2062,7 +2087,11 @@ static inline void *__bitmap_ptr(struct f2fs_sb_info *sbi, int flag)
 	if (is_set_ckpt_flags(sbi, CP_LARGE_NAT_BITMAP_FLAG)) {
 		offset = (flag == SIT_BITMAP) ?
 			le32_to_cpu(ckpt->nat_ver_bitmap_bytesize) : 0;
-		return &ckpt->sit_nat_version_bitmap + offset;
+		/*
+		 * if large_nat_bitmap feature is enabled, leave checksum
+		 * protection for all nat/sit bitmaps.
+		 */
+		return &ckpt->sit_nat_version_bitmap + offset + sizeof(__le32);
 	}
 
 	if (__cp_payload(sbi) > 0) {
@@ -3180,7 +3209,7 @@ void f2fs_invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr);
 bool f2fs_is_checkpointed_data(struct f2fs_sb_info *sbi, block_t blkaddr);
 void f2fs_drop_discard_cmd(struct f2fs_sb_info *sbi);
 void f2fs_stop_discard_thread(struct f2fs_sb_info *sbi);
-bool f2fs_wait_discard_bios(struct f2fs_sb_info *sbi);
+bool f2fs_issue_discard_timeout(struct f2fs_sb_info *sbi);
 void f2fs_clear_prefree_segments(struct f2fs_sb_info *sbi,
 					struct cp_control *cpc);
 void f2fs_dirty_to_prefree(struct f2fs_sb_info *sbi);

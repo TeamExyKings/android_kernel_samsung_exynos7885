@@ -52,6 +52,8 @@ struct gp2ap_data
 	int         ps_low_th;
 	int         settings_thd_low;
 	int         settings_thd_high;
+	int         force_close_thd_low;
+	int         force_close_thd_high;
 	int			dynamic_calib_enabled;
 	int			dynamic_calib_done;
 	int			tune_adc_count;

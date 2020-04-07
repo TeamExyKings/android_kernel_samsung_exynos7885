@@ -21,6 +21,7 @@
 		(x * ABOX_##name##_INTERVAL) + o)
 #define ABOX_L_ARG(name, o, x) ABOX_IDX_ARG(name, o, x)
 #define ABOX_H_ARG(name, o, x) ABOX_IDX_ARG(name, o, x)
+#define ABOX_SFR(name, o, x) (ABOX_##name##_BASE + ((x) * ABOX_##name##_ITV) + (o))
 
 /* System */
 #define ABOX_IP_INDEX			(0x0000)
@@ -271,6 +272,8 @@
 #define ABOX_RDMA_VOL_CHANGE		(0x1C)
 #define ABOX_RDMA_SBANK_LIMIT		(0x20)
 #define ABOX_RDMA_STATUS		(0x30)
+#define ABOX_RDMA_ITV			0x0100
+#define ABOX_RDMA_STATUS_ID(x)	ABOX_SFR(RDMA, 0x30, x)
 /* ABOX_RDMA_CTRL0 */
 #define ABOX_RDMA_ENABLE_L		(0)
 #define ABOX_RDMA_ENABLE_H		(0)
@@ -357,6 +360,7 @@
 #define ABOX_CPU_GEAR_DAI		0xDA100000
 
 #define ABOX_DMA_TIMEOUT_US		(40000)
+#define ABOX_DMA_TIMEOUT_NS		(40000000)
 
 #define ABOX_SAMPLING_RATES (SNDRV_PCM_RATE_KNOT)
 #define ABOX_SAMPLE_FORMATS (SNDRV_PCM_FMTBIT_S16\

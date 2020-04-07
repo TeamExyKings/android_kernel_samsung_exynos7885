@@ -7748,3 +7748,15 @@ exit:
 	return ret;
 }
 #endif
+
+/* fimc_is_sec_print_debuginfo 
+ * for add debug info at kernel panic from fimc_is_panic_handler */
+int fimc_is_sec_print_debuginfo(struct fimc_is_core *core)
+{
+	struct fimc_is_rom_info *finfo = NULL;
+	fimc_is_sec_get_sysfs_finfo_by_position(core->current_position, &finfo);
+
+	info("[SEC_DEBUGINFO] %s\n", finfo->load_setfile_name);
+
+	return 0;
+}

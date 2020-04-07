@@ -85,6 +85,12 @@ struct a96t3x6_data {
 	int abnormal_mode;
 	s16 max_diff;
 	s16 max_normal_diff;
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	int irq_count_2ch;
+	int abnormal_mode_2ch;
+	s16 max_diff_2ch;
+	s16 max_normal_diff_2ch;
+#endif
 #endif
 	int irq_en_cnt;
 	u8 fw_update_state;
@@ -115,9 +121,24 @@ struct a96t3x6_data {
 #if defined(CONFIG_CCIC_NOTIFIER)
 	struct notifier_block cpuidle_ccic_nb;
 #endif
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	u16 grip_p_thd_2ch;
+	u16 grip_r_thd_2ch;
+	u16 grip_n_thd_2ch;
+	u16 grip_baseline_2ch;
+	u16 grip_raw_2ch;
+	u16 grip_raw_d_2ch;
+	u16 diff_2ch;
+	u16 diff_d_2ch;
+	u16 grip_event_2ch;
+#endif
 };
 
 static void a96t3x6_reset(struct a96t3x6_data *data);
+static void a96t3x6_diff_getdata(struct a96t3x6_data *data);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+static void a96t3x6_2ch_diff_getdata(struct a96t3x6_data *data);
+#endif
 
 static int a96t3x6_i2c_read(struct i2c_client *client,
 		u8 reg, u8 *val, unsigned int len)
@@ -215,6 +236,39 @@ static int a96t3x6_i2c_write(struct i2c_client *client, u8 reg, u8 *val)
 	return ret;
 }
 
+static void a96t3x6_check_first_status(struct a96t3x6_data *data, int enable)
+{
+	u8 r_buf[2];
+	u16 grip_thd;
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	u16 grip_thd_2ch;
+#endif
+		
+	a96t3x6_i2c_read(data->client, REG_SAR_THRESHOLD, r_buf, 4);
+	grip_thd = (r_buf[0] << 8) | r_buf[1];
+
+	a96t3x6_diff_getdata(data);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	a96t3x6_i2c_read(data->client, REG_SAR_THRESHOLD_2CH, r_buf, 4);
+	grip_thd_2ch = (r_buf[0] << 8) | r_buf[1];
+
+	a96t3x6_2ch_diff_getdata(data);
+#endif
+	if (grip_thd < data->diff && !data->skip_event) {
+		input_report_rel(data->input_dev, REL_MISC, 1);
+	} else {
+		input_report_rel(data->input_dev, REL_MISC, 2);
+	}
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	if (grip_thd_2ch < data->diff_2ch && !data->skip_event) {
+		input_report_rel(data->input_dev, REL_DIAL, 1);
+	} else {
+		input_report_rel(data->input_dev, REL_DIAL, 2);
+	}
+#endif
+	input_sync(data->input_dev);
+}
+
 /*
  * @enable: turn it on or off.
  * @force: if caller is grip_sensing_change(), it's true. others, it's false.
@@ -243,8 +297,12 @@ static void a96t3x6_set_enable(struct a96t3x6_data *data, int enable, bool force
 		ret = a96t3x6_i2c_write(data->client, REG_SAR_ENABLE, &cmd);
 		if (ret < 0)
 			SENSOR_ERR("failed to enable grip irq\n");
+
+		a96t3x6_check_first_status(data, enable);
+
 		enable_irq(data->irq);
 		enable_irq_wake(data->irq);
+
 		data->irq_en_cnt++;
 	} else {
 		cmd = CMD_OFF;
@@ -392,6 +450,28 @@ static void a96t3x6_diff_getdata(struct a96t3x6_data *data)
 	SENSOR_INFO("%u\n", data->diff);
 }
 
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+static void a96t3x6_2ch_diff_getdata(struct a96t3x6_data *data)
+{
+	int ret;
+	int retry = 3;
+	u8 r_buf[4] = {0,};
+
+	while (retry--) {
+		ret = a96t3x6_i2c_read(data->client, REG_SAR_DIFFDATA_D_2CH, r_buf, 4);
+		if (ret == 0)
+			break;
+		SENSOR_ERR("read failed(%d)\n", retry);
+		usleep_range(10000, 10000);
+	}
+
+	data->diff_2ch = (r_buf[0] << 8) | r_buf[1];
+	data->diff_d_2ch = (r_buf[2] << 8) | r_buf[3];
+
+	SENSOR_INFO("2ch %u\n", data->diff_2ch);
+}
+#endif
+
 static int a96t3x6_get_hallic_state(struct a96t3x6_data *data)
 {
 	char hall_buf[6];
@@ -452,10 +532,20 @@ static void a96t3x6_debug_work_func(struct work_struct *work)
 			a96t3x6_diff_getdata(data);
 			if (data->max_normal_diff < data->diff)
 				data->max_normal_diff = data->diff;
+
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+		} if (data->abnormal_mode_2ch) {
+			a96t3x6_2ch_diff_getdata(data);
+			if (data->max_normal_diff_2ch < data->diff_2ch)
+				data->max_normal_diff_2ch = data->diff_2ch;
+#endif
 		} else {
 #endif
 			if (data->debug_count >= GRIP_LOG_TIME) {
 				a96t3x6_diff_getdata(data);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+				a96t3x6_2ch_diff_getdata(data);
+#endif
 				data->debug_count = 0;
 			} else {
 				data->debug_count++;
@@ -490,6 +580,10 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 	u8 buf;
 	int grip_data;
 	u8 grip_press = 0;
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	int grip_data_2ch;
+	u8 grip_press_2ch = 0;
+#endif
 
 	wake_lock(&data->grip_wake_lock);
 
@@ -514,6 +608,10 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 
 	grip_data = (buf >> 4) & 0x03;
 	grip_press = !(grip_data % 2);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	grip_data_2ch = (buf) & 0x03;
+	grip_press_2ch = !(grip_data_2ch % 2);
+#endif
 
 	if (grip_data) {
 		if (data->skip_event) {
@@ -528,7 +626,26 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 			data->grip_event = grip_press;
 		}
 	}
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	if (grip_data_2ch) {
+		if (data->skip_event) {
+			SENSOR_INFO("%s - 2ch int was generated, but event skipped\n",
+				__func__);
+		} else {
+			if (grip_press_2ch)
+				input_report_rel(data->input_dev, REL_DIAL, 1);
+			else
+				input_report_rel(data->input_dev, REL_DIAL, 2);
+			input_sync(data->input_dev);
+			data->grip_event_2ch = grip_press_2ch;
+		}
+	}
+#endif
 	a96t3x6_diff_getdata(data);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	a96t3x6_2ch_diff_getdata(data);
+#endif	
+	
 #ifdef CONFIG_SEC_FACTORY
 	if (data->abnormal_mode) {
 		if (data->grip_event) {
@@ -537,13 +654,70 @@ static irqreturn_t a96t3x6_interrupt(int irq, void *dev_id)
 			data->irq_count++;
 		}
 	}
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	if (data->abnormal_mode_2ch) {
+		if (data->grip_event_2ch) {
+			if (data->max_diff_2ch < data->diff_2ch)
+				data->max_diff_2ch = data->diff_2ch;
+			data->irq_count_2ch++;
+		}
+	}
+#endif
+
 #endif
 	if (grip_data)
 		SENSOR_INFO("%s %x\n", grip_press ? "grip P" : "grip R", buf);
-
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	if (grip_data_2ch)
+		SENSOR_INFO("2ch %s %x\n", grip_press_2ch ? "grip P" : "grip R", buf);
+#endif
 	wake_unlock(&data->grip_wake_lock);
 	return IRQ_HANDLED;
 }
+
+static int a96t3x6_get_raw_data(struct a96t3x6_data *data)
+{
+	int ret;
+	u8 r_buf[4] = {0,};
+
+	ret = a96t3x6_i2c_read(data->client, REG_SAR_RAWDATA, r_buf, 4);
+	if (ret < 0) {
+		SENSOR_ERR("fail(%d)\n", ret);
+		data->grip_raw = 0;
+		data->grip_raw_d = 0;
+		return ret;
+	}
+
+	data->grip_raw = (r_buf[0] << 8) | r_buf[1];
+	data->grip_raw_d = (r_buf[2] << 8) | r_buf[3];
+
+	SENSOR_INFO("grip_raw = %d\n", data->grip_raw);
+
+	return ret;
+}
+
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+static int a96t3x6_get_2ch_raw_data(struct a96t3x6_data *data)
+{
+	int ret;
+	u8 r_buf[4] = {0,};
+
+	ret = a96t3x6_i2c_read(data->client, REG_SAR_RAWDATA_2CH, r_buf, 4);
+	if (ret < 0) {
+		SENSOR_ERR("fail(%d)\n", ret);
+		data->grip_raw_2ch = 0;
+		data->grip_raw_d_2ch = 0;
+		return ret;
+	}
+
+	data->grip_raw_2ch = (r_buf[0] << 8) | r_buf[1];
+	data->grip_raw_d_2ch = (r_buf[2] << 8) | r_buf[3];
+
+	SENSOR_INFO("2ch grip_raw = %d\n", data->grip_raw_2ch);
+
+	return ret;
+}
+#endif
 
 static ssize_t grip_sar_enable_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
@@ -576,6 +750,9 @@ static ssize_t grip_sar_enable_store(struct device *dev,
 	if (enable == 2) {
 		data->skip_event = true;
 		input_report_rel(data->input_dev, REL_MISC, 2);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+		input_report_rel(data->input_dev, REL_DIAL, 2);
+#endif
 		input_sync(data->input_dev);
 	} else if (enable == 3) {
 		data->skip_event = false;
@@ -684,21 +861,14 @@ static ssize_t grip_raw_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct a96t3x6_data *data = dev_get_drvdata(dev);
-	u8 r_buf[4];
 	int ret;
 
-	ret = a96t3x6_i2c_read(data->client, REG_SAR_RAWDATA, r_buf, 4);
-	if (ret < 0) {
-		SENSOR_ERR("fail(%d)\n", ret);
-		data->grip_raw = 0;
-		data->grip_raw_d = 0;
-		return snprintf(buf, PAGE_SIZE, "%d\n", 0);
-	}
-	data->grip_raw = (r_buf[0] << 8) | r_buf[1];
-	data->grip_raw_d = (r_buf[2] << 8) | r_buf[3];
-
-	return sprintf(buf, "%u,%u\n", data->grip_raw,
-			data->grip_raw_d);
+	ret = a96t3x6_get_raw_data(data);
+	if (ret < 0)
+		return sprintf(buf, "%d\n", 0);
+	else
+		return sprintf(buf, "%u,%u\n", data->grip_raw,
+				data->grip_raw_d);
 }
 
 static ssize_t grip_gain_show(struct device *dev,
@@ -712,8 +882,137 @@ static ssize_t grip_check_show(struct device *dev,
 {
 	struct a96t3x6_data *data = dev_get_drvdata(dev);
 
+	a96t3x6_diff_getdata(data);
+
 	return snprintf(buf, PAGE_SIZE, "%d\n", data->grip_event);
 }
+
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+static ssize_t grip_ch_count_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "2\n");
+}
+
+static ssize_t grip_2ch_threshold_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+	u8 r_buf[4];
+	int ret;
+
+	ret = a96t3x6_i2c_read(data->client, REG_SAR_THRESHOLD_2CH, r_buf, 4);
+	if (ret < 0) {
+		SENSOR_ERR("fail(%d)\n", ret);
+		data->grip_p_thd_2ch = 0;
+		data->grip_r_thd_2ch = 0;
+		return snprintf(buf, PAGE_SIZE, "%u\n", 0);
+	}
+	data->grip_p_thd_2ch = (r_buf[0] << 8) | r_buf[1];
+	data->grip_r_thd_2ch = (r_buf[2] << 8) | r_buf[3];
+
+	ret = a96t3x6_i2c_read(data->client, REG_SAR_NOISE_THRESHOLD_2CH, r_buf, 2);
+	if (ret < 0) {
+		SENSOR_ERR("fail(%d)\n", ret);
+		data->grip_n_thd_2ch = 0;
+		return snprintf(buf, PAGE_SIZE, "%u\n", 0);
+	}
+	data->grip_n_thd_2ch = (r_buf[0] << 8) | r_buf[1];
+
+	return sprintf(buf, "%u,%u,%u\n", data->grip_p_thd, data->grip_r_thd, data->grip_n_thd);
+}
+
+static ssize_t grip_2ch_total_cap_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+	u8 r_buf[2];
+	u8 cmd;
+	int ret;
+	int value;
+
+	cmd = 0x20;
+	ret = a96t3x6_i2c_write(data->client, REG_SAR_TOTALCAP, &cmd);
+	if (ret < 0)
+		SENSOR_ERR("write fail(%d)\n", ret);
+
+	usleep_range(10, 20);
+
+	ret = a96t3x6_i2c_read(data->client, REG_SAR_TOTALCAP_READ_2CH, r_buf, 2);
+	if (ret < 0) {
+		SENSOR_ERR("fail(%d)\n", ret);
+		return snprintf(buf, PAGE_SIZE, "%u\n", 0);
+	}
+	value = (r_buf[0] << 8) | r_buf[1];
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", value / 100);
+}
+
+static ssize_t grip_2ch_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+	int ret;
+	int retry = 3;
+	u8 r_buf[4] = {0,};
+
+	while (retry--) {
+		ret = a96t3x6_i2c_read(data->client, REG_SAR_DIFFDATA_D_2CH, r_buf, 4);
+		if (ret == 0)
+			break;
+		SENSOR_ERR("read failed(%d)\n", retry);
+		usleep_range(10000, 10000);
+	}
+
+	data->diff_2ch = (r_buf[0] << 8) | r_buf[1];
+	data->diff_d_2ch = (r_buf[2] << 8) | r_buf[3];
+
+	return sprintf(buf, "%u,%u\n", data->diff_2ch, data->diff_d_2ch);
+}
+
+static ssize_t grip_2ch_baseline_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+	u8 r_buf[2];
+	int ret;
+
+	ret = a96t3x6_i2c_read(data->client, REG_SAR_BASELINE_2CH, r_buf, 2);
+	if (ret < 0) {
+		SENSOR_ERR("fail(%d)\n",  ret);
+		data->grip_baseline_2ch = 0;
+		return snprintf(buf, PAGE_SIZE, "%d\n", 0);
+	}
+	data->grip_baseline_2ch = (r_buf[0] << 8) | r_buf[1];
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", data->grip_baseline_2ch);
+}
+
+static ssize_t grip_2ch_raw_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+	int ret;
+
+	ret = a96t3x6_get_2ch_raw_data(data);
+	if (ret < 0)
+		return sprintf(buf, "%d\n", 0);
+	else
+		return sprintf(buf, "%u,%u\n", data->grip_raw_2ch,
+				data->grip_raw_d_2ch);
+}
+
+
+static ssize_t grip_2ch_check_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+
+	a96t3x6_2ch_diff_getdata(data);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", data->grip_event_2ch);
+}
+#endif
 
 static ssize_t grip_sw_reset(struct device *dev,
 		 struct device_attribute *attr, const char *buf,
@@ -735,7 +1034,9 @@ static ssize_t grip_sw_reset(struct device *dev,
 	}
 
 	data->grip_event = 0;
-
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	data->grip_event_2ch = 0;
+#endif
 	SENSOR_INFO("cmd(%d)\n", cmd);
 
 	a96t3x6_grip_sw_reset(data);
@@ -772,6 +1073,10 @@ static ssize_t grip_sensing_change(struct device *dev,
 			a96t3x6_sar_sensing(data, 0);
 			data->grip_event = 0;
 			input_report_rel(data->input_dev, REL_MISC, 2);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+			data->grip_event_2ch = 0;
+			input_report_rel(data->input_dev, REL_DIAL, 2);
+#endif
 			input_sync(data->input_dev);
 		} else {
 			a96t3x6_grip_sw_reset(data);
@@ -881,6 +1186,101 @@ release_threshold_out:
 	return count;
 }
 
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+static ssize_t grip_2ch_sar_press_threshold_store(struct device *dev,
+		 struct device_attribute *attr, const char *buf,
+		 size_t count)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+
+	int ret;
+	int threshold;
+	u8 cmd[2];
+
+	ret = sscanf(buf, "%11d", &threshold);
+	if (ret != 1) {
+		SENSOR_ERR("failed to read thresold, buf is %s\n", buf);
+		return count;
+	}
+
+	if (threshold > 0xff) {
+		cmd[0] = (threshold >> 8) & 0xff;
+		cmd[1] = 0xff & threshold;
+	} else if (threshold < 0) {
+		cmd[0] = 0x0;
+		cmd[1] = 0x0;
+	} else {
+		cmd[0] = 0x0;
+		cmd[1] = (u8)threshold;
+	}
+
+	SENSOR_INFO("buf : %d, threshold : %d\n", threshold,
+			(cmd[0] << 8) | cmd[1]);
+
+	ret = a96t3x6_i2c_write(data->client, REG_SAR_THRESHOLD_2CH, &cmd[0]);
+	if (ret != 0) {
+		SENSOR_INFO("failed to write press_threhold data1");
+		goto press_threshold_out;
+	}
+	ret = a96t3x6_i2c_write(data->client, REG_SAR_THRESHOLD_2CH + 0x01, &cmd[1]);
+	if (ret != 0) {
+		SENSOR_INFO("failed to write press_threhold data2");
+		goto press_threshold_out;
+	}
+press_threshold_out:
+	return count;
+}
+
+static ssize_t grip_2ch_sar_release_threshold_store(struct device *dev,
+		 struct device_attribute *attr, const char *buf,
+		 size_t count)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+
+	int ret;
+	int threshold;
+	u8 cmd[2];
+
+	ret = sscanf(buf, "%11d", &threshold);
+	if (ret != 1) {
+		SENSOR_ERR("failed to read thresold, buf is %s\n", buf);
+		return count;
+	}
+
+	if (threshold > 0xff) {
+		cmd[0] = (threshold >> 8) & 0xff;
+		cmd[1] = 0xff & threshold;
+	} else if (threshold < 0) {
+		cmd[0] = 0x0;
+		cmd[1] = 0x0;
+	} else {
+		cmd[0] = 0x0;
+		cmd[1] = (u8)threshold;
+	}
+
+	SENSOR_INFO("buf : %d, threshold : %d\n", threshold,
+				(cmd[0] << 8) | cmd[1]);
+
+	ret = a96t3x6_i2c_write(data->client, REG_SAR_THRESHOLD_2CH + 0x02,
+				&cmd[0]);
+	SENSOR_INFO("ret : %d\n", ret);
+
+	if (ret != 0) {
+		SENSOR_INFO("failed to write release_threshold_data1");
+		goto release_threshold_out;
+	}
+	ret = a96t3x6_i2c_write(data->client, REG_SAR_THRESHOLD_2CH + 0x03,
+				&cmd[1]);
+	SENSOR_INFO("ret : %d\n", ret);
+	if (ret != 0) {
+		SENSOR_INFO("failed to write release_threshold_data2");
+		goto release_threshold_out;
+	}
+release_threshold_out:
+	return count;
+}
+#endif
+
 static ssize_t grip_mode_change(struct device *dev,
 		 struct device_attribute *attr, const char *buf,
 		 size_t count)
@@ -955,6 +1355,57 @@ static ssize_t a96t3x6_irq_count_store(struct device *dev,
 	SENSOR_INFO("result : %d\n", onoff);
 	return count;
 }
+
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+static ssize_t a96t3x6_irq_count_2ch_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+	int result = 0;
+	s16 max_diff_val = 0;
+
+	if (data->irq_count_2ch) {
+		result = -1;
+		max_diff_val = data->max_diff_2ch;
+	} else {
+		max_diff_val = data->max_normal_diff_2ch;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%d,%d,%d\n", result,
+			data->irq_count_2ch, max_diff_val);
+}
+
+static ssize_t a96t3x6_irq_count_2ch_store(struct device *dev,
+		 struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct a96t3x6_data *data = dev_get_drvdata(dev);
+	u8 onoff;
+	int ret;
+
+	ret = kstrtou8(buf, 10, &onoff);
+	if (ret < 0) {
+		SENSOR_ERR("kstrtou8 failed.(%d)\n", ret);
+		return count;
+	}
+
+	mutex_lock(&data->lock);
+	if (onoff == 0) {
+		data->abnormal_mode_2ch = 0;
+	} else if (onoff == 1) {
+		data->abnormal_mode_2ch = 1;
+		data->irq_count_2ch = 0;
+		data->max_diff_2ch = 0;
+		data->max_normal_diff_2ch = 0;
+	} else {
+		SENSOR_ERR("Invalid value.(%d)\n", onoff);
+	}
+	mutex_unlock(&data->lock);
+
+	SENSOR_INFO("result : %d\n", onoff);
+	return count;
+}
+#endif
+
 #endif
 
 static ssize_t grip_vendor_show(struct device *dev,
@@ -1489,7 +1940,7 @@ static ssize_t grip_reg_show(struct device *dev,
 	int offset = 0, i = 0;
 	struct a96t3x6_data *data = dev_get_drvdata(dev);
 
-	for (i = 0; i < 255; i++) {
+	for (i = 0; i < 128; i++) {
 		a96t3x6_i2c_read(data->client, i, &val, 1);
 		SENSOR_INFO("%s: reg=%02X val=%02X\n", __func__, i, val);
 		
@@ -1576,10 +2027,20 @@ static DEVICE_ATTR(grip_sar_press_threshold, 0220,
 		NULL, grip_sar_press_threshold_store);
 static DEVICE_ATTR(grip_sar_release_threshold, 0220,
 		NULL, grip_sar_release_threshold_store);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+static DEVICE_ATTR(grip_sar_press_threshold_2ch, 0220,
+		NULL, grip_2ch_sar_press_threshold_store);
+static DEVICE_ATTR(grip_sar_release_threshold_2ch, 0220,
+		NULL, grip_2ch_sar_release_threshold_store);
+#endif
 #endif
 #ifdef CONFIG_SEC_FACTORY
 static DEVICE_ATTR(grip_irq_count, 0664, a96t3x6_irq_count_show,
 			a96t3x6_irq_count_store);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+static DEVICE_ATTR(grip_irq_count_2ch, 0664, a96t3x6_irq_count_2ch_show,
+			a96t3x6_irq_count_2ch_store);
+#endif
 #endif
 static DEVICE_ATTR(name, 0444, grip_name_show, NULL);
 static DEVICE_ATTR(vendor, 0444, grip_vendor_show, NULL);
@@ -1591,6 +2052,15 @@ static DEVICE_ATTR(grip_irq_state, 0444, grip_irq_state_show, NULL);
 static DEVICE_ATTR(grip_irq_en_cnt, 0444, grip_irq_en_cnt_show, NULL);
 static DEVICE_ATTR(grip_reg_rw, 0664, grip_reg_show, grip_reg_store);
 static DEVICE_ATTR(grip_crc_check, 0444, grip_crc_check_show, NULL);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+static DEVICE_ATTR(ch_count, 0444, grip_ch_count_show, NULL);
+static DEVICE_ATTR(grip_threshold_2ch, 0444, grip_2ch_threshold_show, NULL);
+static DEVICE_ATTR(grip_total_cap_2ch, 0444, grip_2ch_total_cap_show, NULL);
+static DEVICE_ATTR(grip_2ch, 0444, grip_2ch_show, NULL);
+static DEVICE_ATTR(grip_baseline_2ch, 0444, grip_2ch_baseline_show, NULL);
+static DEVICE_ATTR(grip_raw_2ch, 0444, grip_2ch_raw_show, NULL);
+static DEVICE_ATTR(grip_check_2ch, 0444, grip_2ch_check_show, NULL);
+#endif
 
 static struct device_attribute *grip_sensor_attributes[] = {
 	&dev_attr_grip_threshold,
@@ -1607,9 +2077,16 @@ static struct device_attribute *grip_sensor_attributes[] = {
 	&dev_attr_grip_sar_only_mode,
 	&dev_attr_grip_sar_press_threshold,
 	&dev_attr_grip_sar_release_threshold,
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	&dev_attr_grip_sar_press_threshold_2ch,
+	&dev_attr_grip_sar_release_threshold_2ch,
+#endif
 #endif
 #ifdef CONFIG_SEC_FACTORY
 	&dev_attr_grip_irq_count,
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	&dev_attr_grip_irq_count_2ch,
+#endif
 #endif
 	&dev_attr_name,
 	&dev_attr_vendor,
@@ -1621,6 +2098,15 @@ static struct device_attribute *grip_sensor_attributes[] = {
 	&dev_attr_grip_irq_en_cnt,
 	&dev_attr_grip_reg_rw,
 	&dev_attr_grip_crc_check,
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	&dev_attr_ch_count,
+	&dev_attr_grip_threshold_2ch,
+	&dev_attr_grip_total_cap_2ch,
+	&dev_attr_grip_2ch,
+	&dev_attr_grip_baseline_2ch,
+	&dev_attr_grip_raw_2ch,
+	&dev_attr_grip_check_2ch,
+#endif
 	NULL,
 };
 
@@ -1936,6 +2422,9 @@ static int a96t3x6_probe(struct i2c_client *client,
 	input_dev->id.bustype = BUS_I2C;
 
 	input_set_capability(input_dev, EV_REL, REL_MISC);
+#ifdef CONFIG_SENSORS_A96T3X6_2CH
+	input_set_capability(input_dev, EV_REL, REL_DIAL);
+#endif
 	input_set_drvdata(input_dev, data);
 
 	INIT_DELAYED_WORK(&data->debug_work, a96t3x6_debug_work_func);

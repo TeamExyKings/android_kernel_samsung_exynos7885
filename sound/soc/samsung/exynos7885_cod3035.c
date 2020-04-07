@@ -906,10 +906,11 @@ static int exynos7885_audio_probe(struct platform_device *pdev)
 	if (ret)
 	{
 		dev_err(card->dev, "snd_soc_register_card() failed:%d\n", ret);
+	} else {
+		universal7885_mic_bias_parse_dt(pdev);
+		universal7885_init_soundcard(card);
 	}
 
-	universal7885_mic_bias_parse_dt(pdev);
-	universal7885_init_soundcard(card);
 	return ret;
 }
 

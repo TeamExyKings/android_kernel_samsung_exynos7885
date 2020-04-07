@@ -1144,6 +1144,7 @@ source "drivers/input/touchscreen/stm/Kconfig"
 source "drivers/input/touchscreen/stm_fts1ba90a/Kconfig"
 source "drivers/input/touchscreen/imagis_30xxh/Kconfig"
 source "drivers/input/touchscreen/imagis_40xx/Kconfig"
+source "drivers/input/touchscreen/imagis/ist4050/Kconfig"
 source "drivers/input/touchscreen/novatek_nt36xx/Kconfig"
 source "drivers/input/touchscreen/himax_83xxx/Kconfig"
 endif

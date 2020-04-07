@@ -28,6 +28,8 @@
 #define ENABLE 1
 #define DISABLE 0
 
+#define IVR_WORK_DELAY 50
+
 static char *s2mu205_supplied_to[] = {
 	"battery",
 };
@@ -52,15 +54,29 @@ static void s2mu205_test_read(struct i2c_client *i2c)
 		sprintf(str+strlen(str), "0x%02x:0x%02x, ", i, data);
 	}
 
-	for (i = S2MU205_CHG_STATUS0 ; i <= S2MU205_CHG_STATUS5 ; i++) {
+	s2mu205_read_reg(i2c, 0x0C, &data);
+	sprintf(str+strlen(str), "0x%02x:0x%02x, ", 0x0C, data);
+
+	for (i = S2MU205_CHG_STATUS0 ; i <= S2MU205_CHG_CTRL15 ; i++) {
 		s2mu205_read_reg(i2c, i, &data);
 		sprintf(str+strlen(str), "0x%02x:0x%02x, ", i, data);
 	}
 
-	for (i = S2MU205_CHG_CTRL0 ; i <= S2MU205_CHG_CTRL18 ; i++) {
-		s2mu205_read_reg(i2c, i, &data);
-		sprintf(str+strlen(str), "0x%02x:0x%02x, ", i, data);
-	}
+	s2mu205_read_reg(i2c, 0x33, &data);
+	sprintf(str+strlen(str), "0x%02x:0x%02x, ", 0x33, data);
+	s2mu205_read_reg(i2c, 0x3F, &data);
+	sprintf(str+strlen(str), "0x%02x:0x%02x, ", 0x3F, data);
+	s2mu205_read_reg(i2c, 0x48, &data);
+	sprintf(str+strlen(str), "0x%02x:0x%02x, ", 0x48, data);
+	s2mu205_read_reg(i2c, 0x49, &data);
+	sprintf(str+strlen(str), "0x%02x:0x%02x, ", 0x49, data);
+	s2mu205_read_reg(i2c, 0x4F, &data);
+	sprintf(str+strlen(str), "0x%02x:0x%02x, ", 0x4F, data);
+	s2mu205_read_reg(i2c, 0xF5, &data);
+	sprintf(str+strlen(str), "0x%02x:0x%02x, ", 0xF5, data);
+	s2mu205_read_reg(i2c, 0xA7, &data);
+	sprintf(str+strlen(str), "0x%02x:0x%02x, ", 0xA7, data);
+
 	pr_err("%s: %s\n", __func__, str);
 }
 
@@ -84,17 +100,28 @@ static int s2mu205_charger_otg_control(
 
 	mutex_lock(&charger->charger_mutex);
 	if (!enable) {
+		/* CHGIN Vref Soft start 1024us->128us (default) */
+		s2mu205_update_reg(charger->i2c, 0x92, 0x0C, 0x0C);
+
 		s2mu205_update_reg(charger->i2c,
 				S2MU205_CHG_CTRL0, CHG_MODE, REG_MODE_MASK);
 	} else {
+		/* OTG OCP level 1.5A */
 		s2mu205_update_reg(charger->i2c,
 				S2MU205_CHG_CTRL12,
 				S2MU205_SET_OTG_OCP_1500mA << SET_OTG_OCP_SHIFT,
 				SET_OTG_OCP_MASK);
+
+		/* CHGIN Vref Soft start 128us -> 1024us */
+		s2mu205_update_reg(charger->i2c, 0x92, 0x00, 0x0C);
+
 		msleep(30);
+
+		/* OTG mode */
 		s2mu205_update_reg(charger->i2c,
 				S2MU205_CHG_CTRL0, OTG_BST_MODE, REG_MODE_MASK);
-		charger->cable_type = POWER_SUPPLY_TYPE_OTG;
+
+		charger->cable_type = SEC_BATTERY_CABLE_OTG;
 	}
 	charger->otg_on = enable;
 	mutex_unlock(&charger->charger_mutex);
@@ -339,6 +366,8 @@ static bool s2mu205_chg_init(struct s2mu205_charger_data *charger)
 	/* ensure OTG start-up */
 	s2mu205_update_reg(charger->i2c, 0x90, 0x00, 0x01 << 2);
 
+	s2mu205_update_reg(charger->i2c, 0x8F, 0x00, 0x0C);
+
 	/* To prevent entering watchdog issue case we set WDT_CLR to not clear before enabling WDT */
 	s2mu205_update_reg(charger->i2c, S2MU205_CHG_CTRL13, 0x00, WDT_CLR_MASK);
 
@@ -362,6 +391,13 @@ static bool s2mu205_chg_init(struct s2mu205_charger_data *charger)
 	/* MRSTB 1s set */
 	//s2mu205_write_reg(charger->i2c, 0xE5, 0x08);
 
+#ifndef CONFIG_SEC_FACTORY
+	/* Prevent sudden power off when detected water is dried */
+	if (!factory_mode) {
+		pr_info ("%s Normal booting\n", __func__);
+		s2mu205_update_reg(charger->i2c, 0x95, 0x00, 0x04);
+	}
+#endif
 	return true;
 }
 
@@ -424,6 +460,10 @@ static int s2mu205_get_charge_type(struct s2mu205_charger_data *charger)
 		status = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
 		break;
 	}
+
+	if (charger->slow_charging)
+		status = POWER_SUPPLY_CHARGE_TYPE_SLOW;
+
 	return status;
 }
 
@@ -592,9 +632,11 @@ static int s2mu205_chg_set_property(struct power_supply *psy,
 		/* val->intval : type */
 	case POWER_SUPPLY_PROP_ONLINE:
 		charger->cable_type = val->intval;
-		if (charger->cable_type != POWER_SUPPLY_TYPE_OTG) {
-			if (charger->cable_type == POWER_SUPPLY_TYPE_BATTERY ||
-			charger->cable_type == POWER_SUPPLY_TYPE_UNKNOWN) {
+		charger->slow_charging = false;
+		charger->ivr_on = false;
+		if (charger->cable_type != SEC_BATTERY_CABLE_OTG) {
+			if (charger->cable_type == SEC_BATTERY_CABLE_NONE ||
+			charger->cable_type == SEC_BATTERY_CABLE_UNKNOWN) {
 				pr_err("[DEBUG]%s:[BATT] Type Battery\n", __func__);
 				value.intval = 0;
 			} else {
@@ -607,6 +649,23 @@ static int s2mu205_chg_set_property(struct power_supply *psy,
 			ret = power_supply_set_property(psy, POWER_SUPPLY_PROP_ENERGY_AVG, &value);
 			if (ret < 0)
 				pr_err("%s: Fail to execute property\n", __func__);
+
+			if (charger->cable_type == SEC_BATTERY_CABLE_NONE) {
+				/* At cable removal enable IVR IRQ if it was disabled */
+				if (charger->irq_ivr_enabled == 0) {
+					u8 reg_data;
+
+					charger->irq_ivr_enabled = 1;
+					/* Unmask IRQ */
+					s2mu205_update_reg(charger->i2c, S2MU205_CHG_INT2M,
+						0 << IVR_M_SHIFT, IVR_M_MASK);
+					enable_irq(charger->irq_ivr);
+					s2mu205_read_reg(charger->i2c, S2MU205_CHG_INT2M, &reg_data);
+					pr_info("%s : enable ivr : 0x%x\n", __func__, reg_data);
+				}
+			}
+		} else {
+			pr_info("[DEBUG]%s: Cable Type OTG \n", __func__);
 		}
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
@@ -622,8 +681,7 @@ static int s2mu205_chg_set_property(struct power_supply *psy,
 		pr_info("[DEBUG] %s: is_charging %d\n", __func__, charger->is_charging);
 		charger->charging_current = val->intval;
 		/* set charging current */
-		if (charger->is_charging)
-			s2mu205_set_fast_charging_current(charger, charger->charging_current);
+		s2mu205_set_fast_charging_current(charger, charger->charging_current);
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
 		break;
@@ -654,7 +712,7 @@ static int s2mu205_chg_set_property(struct power_supply *psy,
 		if (ret < 0)
 			pr_err("%s: Fail to execute property\n", __func__);
 
-		if (value.intval != POWER_SUPPLY_TYPE_OTG) {
+		if (value.intval != SEC_BATTERY_CABLE_OTG) {
 			switch (charger->charge_mode) {
 			case SEC_BAT_CHG_MODE_BUCK_OFF:
 				buck_state = DISABLE;
@@ -683,21 +741,34 @@ static int s2mu205_chg_set_property(struct power_supply *psy,
 					__func__, value.intval);
 		}
 		break;
+#ifndef CONFIG_SEC_FACTORY
+	case POWER_SUPPLY_PROP_FACTORY_MODE:
+		/* prevent sudden power off when detected water is dried */
+		if (val->intval) {
+			pr_info("%s : 523K, 301K, 255K\n", __func__);
+			s2mu205_update_reg(charger->i2c, 0x95, 0x04, 0x04);
+		} else {
+			pr_info("%s : 619K, OPEN\n", __func__);
+			s2mu205_update_reg(charger->i2c, 0x95, 0x00, 0x04);
+		}
+		break;
+#endif
 	case POWER_SUPPLY_PROP_ENERGY_NOW: /* Factory Mode Scenario */
 		if (val->intval) {
 			pr_info("%s: Factory Mode Setting, 523K/301K\n", __func__);
 #if defined(CONFIG_LEDS_S2MU205_FLASH)
 			/* FLED driver TA only mode set, 0x5C[7:6] -> 0x02*/
-			s2mu205_set_operation_mode(TA_MODE);
+			s2mu205_set_operation_mode(S2MU205_FACTORY);
 #endif
 			/* Factory Mode Setting Sequence */
-			s2mu205_set_regulation_vsys(charger, 4000);
+			s2mu205_set_regulation_vsys(charger, 4300);
 			s2mu205_update_reg(charger->i2c, S2MU205_CHG_CTRL6, 0x80, 0x80);
 			s2mu205_update_reg(charger->i2c, 0x96, 0x0, 0x1);
+			s2mu205_update_reg(charger->i2c, 0xA7, 0x0, 0x1F);
 			s2mu205_update_reg(charger->i2c, 0xE5, 0x8, 0xF);
 			s2mu205_set_input_current_limit(charger, 2000);
 
-			value.intval = SEC_BAT_INBAT_FGSRC_SWITCHING_OFF;
+			value.intval = SEC_BAT_FGSRC_SWITCHING_OFF;
 			psy_do_property("s2mu205-fuelgauge", set,
 				POWER_SUPPLY_EXT_PROP_INBAT_VOLTAGE_FGSRC_SWITCHING, value);
 
@@ -705,16 +776,17 @@ static int s2mu205_chg_set_property(struct power_supply *psy,
 			pr_info("%s: Factory Mode Release, 619K\n", __func__);
 #if defined(CONFIG_LEDS_S2MU205_FLASH)
 			/* FLED driver Auto control mode set, 0x5C[7:6] -> 0x00*/
-			s2mu205_set_operation_mode(AUTO_MODE);
+			s2mu205_set_operation_mode(S2MU205_NORMAL);
 #endif
 			/* Factory Mode Setting Sequence */
+			s2mu205_update_reg(charger->i2c, 0xA7, 0x10, 0x1F);
 			s2mu205_update_reg(charger->i2c, 0x96, 0x1, 0x1);
 			s2mu205_update_reg(charger->i2c, 0xE5, 0xE, 0xF);
 			s2mu205_set_input_current_limit(charger, 2000);
 			s2mu205_update_reg(charger->i2c, S2MU205_CHG_CTRL6, 0x0, 0x80);
 			s2mu205_set_regulation_vsys(charger, 4400);
 
-			value.intval = SEC_BAT_INBAT_FGSRC_SWITCHING_ON;
+			value.intval = SEC_BAT_FGSRC_SWITCHING_ON;
 			psy_do_property("s2mu205-fuelgauge", set,
 				POWER_SUPPLY_EXT_PROP_INBAT_VOLTAGE_FGSRC_SWITCHING, value);
 		}
@@ -760,7 +832,7 @@ static int s2mu205_chg_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_MAX ... POWER_SUPPLY_EXT_PROP_MAX:
 		switch (ext_psp) {
-		case POWER_SUPPLY_EXT_PROP_FACTORY_VOLTAGE_REGULATION: 
+		case POWER_SUPPLY_EXT_PROP_FACTORY_VOLTAGE_REGULATION:
 			/* enable EN_JIG_AP */
 			pr_info("%s: factory voltage regulation (%d)\n", __func__, val->intval);
 			s2mu205_set_regulation_vsys(charger, val->intval);
@@ -776,11 +848,15 @@ static int s2mu205_chg_set_property(struct power_supply *psy,
 
 				/* VBUS UVLO disable */
 				s2mu205_update_reg(charger->i2c, 0x32, 0xC0, 0xC0);
+				/* T_DET_CHGIN_TO_BAT */
+				s2mu205_update_reg(charger->i2c, 0x32, 0x0C, 0x0C);
 
 				/* Bypass Mode Setting Sequence */
 				s2mu205_update_reg(charger->i2c, 0x8D, 0x1, 0x1);
 				s2mu205_write_reg(charger->i2c, 0x70, 0x0);
 				s2mu205_update_reg(charger->i2c, S2MU205_CHG_CTRL0, 0x30, 0x30);
+
+				mdelay(100);
 
 				/* QBAT off for prevent SMPL when detach cable */
 				s2mu205_update_reg(charger->i2c, 0x2A, 0xC0, 0xC0);
@@ -923,7 +999,7 @@ static irqreturn_t s2mu205_chg_fault_isr(int irq, void *data)
 	fault = (val & CHG_FAULT_STATUS_MASK) >> CHG_FAULT_STATUS_SHIFT;
 
 	/* TODO : need to check previous history */
-/*	
+/*
 	if (fault == CHG_STATUS_WD_SUSPEND || fault == CHG_STATUS_WD_RST) {
 		value.intval = 1;
 		pr_info("%s, reset USBPD\n", __func__);
@@ -931,7 +1007,7 @@ static irqreturn_t s2mu205_chg_fault_isr(int irq, void *data)
 					POWER_SUPPLY_PROP_USBPD_RESET, value);
 	}
 */
-	
+
 	return IRQ_HANDLED;
 }
 
@@ -942,6 +1018,179 @@ static irqreturn_t s2mu205_ovp_isr(int irq, void *data)
 
 	s2mu205_read_reg(charger->i2c, S2MU205_CHG_STATUS0, &val);
 	pr_info("%s ovp %02x\n", __func__, val);
+
+	s2mu205_read_reg(charger->i2c, S2MU205_CHG_STATUS1, &val);
+	pr_info("%s ovp1 %02x\n", __func__, val);
+
+	s2mu205_read_reg(charger->i2c, S2MU205_CHG_STATUS2, &val);
+	pr_info("%s ovp2 %02x\n", __func__, val);
+
+	s2mu205_read_reg(charger->i2c, S2MU205_CHG_STATUS3, &val);
+	pr_info("%s ovp3 %02x\n", __func__, val);
+
+	s2mu205_read_reg(charger->i2c, S2MU205_CHG_STATUS4, &val);
+	pr_info("%s ovp4 %02x\n", __func__, val);
+
+	return IRQ_HANDLED;
+}
+
+static bool s2mu205_check_slow_charging(struct s2mu205_charger_data *charger,
+	int input_current)
+{
+	pr_info("%s: charger->cable_type %d, input_current %d\n",
+		__func__, charger->cable_type, input_current);
+
+	/* under 400mA considered as slow charging concept for VZW */
+	if (input_current <= charger->pdata->slow_charging_current &&
+		charger->cable_type != SEC_BATTERY_CABLE_NONE) {
+		union power_supply_propval value;
+
+		charger->slow_charging = true;
+		pr_info("%s: slow charging on : input current(%dmA), cable type(%d)\n",
+			__func__, input_current, charger->cable_type);
+		value.intval = POWER_SUPPLY_CHARGE_TYPE_SLOW;
+		psy_do_property("battery", set,
+			POWER_SUPPLY_PROP_CHARGE_TYPE, value);
+	} else
+		charger->slow_charging = false;
+
+	return charger->slow_charging;
+}
+
+static void reduce_input_current(struct s2mu205_charger_data *charger)
+{
+	int old_input_current, new_input_current;
+	int data;
+
+	old_input_current = s2mu205_get_input_current_limit(charger);
+	new_input_current = (old_input_current > MINIMUM_INPUT_CURRENT + REDUCE_CURRENT_STEP) ?
+		(old_input_current - REDUCE_CURRENT_STEP) : MINIMUM_INPUT_CURRENT;
+
+	if (old_input_current <= new_input_current) {
+		pr_info("%s: Same or less new input current:(%d, %d, %d)\n", __func__,
+			old_input_current, new_input_current, charger->input_current);
+	} else {
+		pr_info("%s: input currents:(%d, %d, %d)\n", __func__,
+			old_input_current, new_input_current, charger->input_current);
+
+		data = (new_input_current - 50) / 25;
+		s2mu205_update_reg(charger->i2c, S2MU205_CHG_CTRL1,
+			data << SET_IIN_CHGIN_ILIM_SHIFT, SET_IIN_CHGIN_ILIM_MASK);
+
+		charger->input_current = s2mu205_get_input_current_limit(charger);
+	}
+	charger->ivr_on = true;
+}
+
+static void s2mu205_ivr_irq_work(struct work_struct *work)
+{
+	struct s2mu205_charger_data *charger = container_of(work,
+				struct s2mu205_charger_data, ivr_work.work);
+	u8 ivr_state;
+	int ret;
+	int ivr_cnt = 0;
+
+	pr_info("%s:\n", __func__);
+
+	if (charger->cable_type == SEC_BATTERY_CABLE_NONE) {
+		u8 ivr_mask;
+
+		pr_info("%s : skip\n", __func__);
+		s2mu205_read_reg(charger->i2c, S2MU205_CHG_INT2M, &ivr_mask);
+		if (ivr_mask & 0x02) {
+			/* Unmask IRQ */
+			s2mu205_update_reg(charger->i2c, S2MU205_CHG_INT2M,
+					0 << IVR_M_SHIFT, IVR_M_MASK);
+		}
+		wake_unlock(&charger->ivr_wake_lock);
+		return;
+	}
+
+	ret = s2mu205_read_reg(charger->i2c, S2MU205_CHG_STATUS3, &ivr_state);
+	if (ret < 0) {
+		wake_unlock(&charger->ivr_wake_lock);
+		pr_info("%s : I2C error\n", __func__);
+		/* Unmask IRQ */
+		s2mu205_update_reg(charger->i2c, S2MU205_CHG_INT2M,
+				0 << IVR_M_SHIFT, IVR_M_MASK);
+		return;
+	}
+	pr_info("%s: ivr_status 0x13:0x%02x\n", __func__, ivr_state);
+
+	mutex_lock(&charger->charger_mutex);
+
+	while ((ivr_state & IVR_STATUS) &&
+			charger->cable_type != SEC_BATTERY_CABLE_NONE) {
+
+		if (s2mu205_read_reg(charger->i2c, S2MU205_CHG_STATUS3, &ivr_state)) {
+			pr_err("%s: Error reading S2MU205_CHG_STATUS3\n", __func__);
+			break;
+		}
+		pr_info("%s: ivr_status 0x13:0x%02x\n", __func__, ivr_state);
+
+		if (++ivr_cnt >= 2) {
+			reduce_input_current(charger);
+			ivr_cnt = 0;
+		}
+		mdelay(50);
+
+		if (!(ivr_state & IVR_STATUS)) {
+			pr_info("%s: EXIT IVR WORK: check value (0x13:0x%02x, input current:%d)\n", __func__,
+				ivr_state, charger->input_current);
+			break;
+		}
+
+		if (s2mu205_get_input_current_limit(charger) <= MINIMUM_INPUT_CURRENT)
+			break;
+	}
+
+	if (charger->ivr_on) {
+		union power_supply_propval value;
+
+		if (is_not_wireless_type(charger->cable_type))
+			s2mu205_check_slow_charging(charger, charger->input_current);
+
+		if ((charger->irq_ivr_enabled == 1) &&
+			(charger->input_current <= MINIMUM_INPUT_CURRENT) &&
+			(charger->slow_charging)) {
+			/* Disable IVR IRQ, can't reduce current any more */
+			u8 reg_data;
+
+			charger->irq_ivr_enabled = 0;
+			disable_irq_nosync(charger->irq_ivr);
+			/* Mask IRQ */
+			s2mu205_update_reg(charger->i2c,
+				    S2MU205_CHG_INT2M, 1 << IVR_M_SHIFT, IVR_M_MASK);
+			s2mu205_read_reg(charger->i2c, S2MU205_CHG_INT2M, &reg_data);
+			pr_info("%s : disable ivr : 0x%x\n", __func__, reg_data);
+		}
+
+		value.intval = s2mu205_get_input_current_limit(charger);
+		psy_do_property("battery", set,
+				POWER_SUPPLY_EXT_PROP_AICL_CURRENT, value);
+	}
+
+	if (charger->irq_ivr_enabled == 1) {
+		/* Unmask IRQ */
+		s2mu205_update_reg(charger->i2c, S2MU205_CHG_INT2M,
+			0 << IVR_M_SHIFT, IVR_M_MASK);
+	}
+	mutex_unlock(&charger->charger_mutex);
+	wake_unlock(&charger->ivr_wake_lock);
+}
+
+static irqreturn_t s2mu205_ivr_isr(int irq, void *data)
+{
+	struct s2mu205_charger_data *charger = data;
+
+	pr_info("%s: Start\n", __func__);
+	wake_lock(&charger->ivr_wake_lock);
+	/* Mask IRQ */
+	s2mu205_update_reg(charger->i2c,
+		    S2MU205_CHG_INT2M, 1 << IVR_M_SHIFT, IVR_M_MASK);
+	queue_delayed_work(charger->charger_wqueue, &charger->ivr_work,
+		msecs_to_jiffies(IVR_WORK_DELAY));
+	pr_info("%s: irq(%d)\n", __func__, irq);
 
 	return IRQ_HANDLED;
 }
@@ -959,6 +1208,15 @@ static int s2mu205_charger_parse_dt(struct device *dev,
 				&pdata->chg_switching_freq);
 		if (ret < 0)
 			pr_info("%s: Charger switching FRQ is Empty\n", __func__);
+
+		ret = of_property_read_u32(np, "charger,slow_charging_current",
+					   &pdata->slow_charging_current);
+		if (ret) {
+			pr_info("%s : slow_charging_current is Empty\n", __func__);
+			pdata->slow_charging_current = SLOW_CHARGING_CURRENT_STANDARD;
+		} else {
+			pr_info("%s : slow_charging_current is %d \n", __func__, pdata->slow_charging_current);
+		}
 	}
 
 	np = of_find_node_by_name(NULL, "battery");
@@ -1055,6 +1313,8 @@ static int s2mu205_charger_probe(struct platform_device *pdev)
 
 	mutex_init(&charger->charger_mutex);
 	charger->otg_on = false;
+	charger->ivr_on = false;
+	charger->slow_charging = false;
 
 	charger->dev = &pdev->dev;
 	charger->i2c = s2mu205->i2c;
@@ -1084,7 +1344,7 @@ static int s2mu205_charger_probe(struct platform_device *pdev)
 	charger->psy_chg_desc.num_properties = ARRAY_SIZE(s2mu205_charger_props);
 
 	charger->psy_otg_desc.name           = "otg";
-	charger->psy_otg_desc.type           = POWER_SUPPLY_TYPE_UNKNOWN;
+	charger->psy_otg_desc.type           = POWER_SUPPLY_TYPE_OTG;
 	charger->psy_otg_desc.get_property   = s2mu205_otg_get_property;
 	charger->psy_otg_desc.set_property   = s2mu205_otg_set_property;
 	charger->psy_otg_desc.properties     = s2mu205_otg_props;
@@ -1118,6 +1378,11 @@ static int s2mu205_charger_probe(struct platform_device *pdev)
 		ret = -ESRCH;
 		goto err_create_wq;
 	}
+
+	wake_lock_init(&charger->ivr_wake_lock, WAKE_LOCK_SUSPEND,
+		"charger-ivr");
+	INIT_DELAYED_WORK(&charger->otg_vbus_work, s2mu205_charger_otg_vbus_work);
+	INIT_DELAYED_WORK(&charger->ivr_work, s2mu205_ivr_irq_work);
 
 	/*
 	 * irq request
@@ -1181,7 +1446,16 @@ static int s2mu205_charger_probe(struct platform_device *pdev)
 		goto err_reg_irq;
 	}
 
-	INIT_DELAYED_WORK(&charger->otg_vbus_work, s2mu205_charger_otg_vbus_work);
+	charger->irq_ivr = pdata->irq_base + S2MU205_CHG2_IRQ_IVR;
+	charger->irq_ivr_enabled = 1;
+	ret = request_threaded_irq(charger->irq_ivr, NULL,
+			s2mu205_ivr_isr, 0, "ivr-irq", charger);
+	if (ret < 0) {
+		pr_err("%s: Fail to request IVR_INT IRQ: %d: %d\n",
+					__func__, charger->irq_ivr, ret);
+		charger->irq_ivr_enabled = -1;
+		goto err_reg_irq;
+	}
 
 	/* Do max charging by freq. change, when duty is max */
 	s2mu205_update_reg(charger->i2c, 0x7A, 0x1 << 4, 0x1 << 4);

@@ -2118,6 +2118,7 @@ int fimc_is_load_ddk_bin(int loadType)
 	fimc_is_ischain_version(FIMC_IS_BIN_DDK_LIBRARY, bin.data, bin.size);
 	release_binary(&bin);
 
+	gPtr_lib_support.log_ptr = 0;
 	set_os_system_funcs(os_system_funcs);
 	/* call start_up function for DDK binary */
 #ifdef ENABLE_FPSIMD_FOR_USER
@@ -2316,7 +2317,7 @@ int fimc_is_load_bin(void)
 		fimc_is_load_ctrl_unlock();
 		return ret;
 	}
-	lib->log_ptr = 0;
+
 
 #ifdef USE_TZ_CONTROLLED_MEM_ATTRIBUTE
 	ret = fimc_is_load_rta_bin(BINARY_LOAD_DATA);

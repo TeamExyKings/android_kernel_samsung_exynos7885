@@ -129,7 +129,6 @@ static int decon_set_doze(struct decon_device *decon)
 
 	decon_abd_enable(decon, 1);
 err:
-	atomic_set(&decon->win_config, 1);
 	mutex_unlock(&decon->lock);
 
 	decon_info("- %s: %d\n", __func__, decon->id);
@@ -239,7 +238,7 @@ int decon_set_doze_mode(struct decon_device *decon, u32 mode)
 {
 	int ret = 0;
 	struct fb_info *info = decon->win[decon->dt.dft_win]->fbinfo;
-	struct fb_event v;
+	struct fb_event v = {0, };
 	int blank = 0;
 
 	int (*doze_cb[DECON_PWR_MAX])(struct decon_device *) = {
@@ -260,14 +259,16 @@ int decon_set_doze_mode(struct decon_device *decon, u32 mode)
 	if (doze_cb[mode] == NULL)
 		return ret;
 
-	ret = doze_cb[mode](decon);
-
 	blank = (mode == DECON_PWR_DOZE) ? FB_BLANK_UNBLANK : FB_BLANK_POWERDOWN;
 
 	v.info = info;
 	v.data = &blank;
 
-	decon_notifier_call_chain(FB_EVENT_BLANK, &v);
+	decon_notifier_call_chain(DECON_EARLY_EVENT_DOZE, &v);
+
+	ret = doze_cb[mode](decon);
+
+	decon_notifier_call_chain(DECON_EVENT_DOZE, &v);
 
 	return ret;
 }

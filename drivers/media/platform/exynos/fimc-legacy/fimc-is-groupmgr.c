@@ -3026,10 +3026,12 @@ p_skip_sync:
 			 * HACK: Happen to CSIS_ERR_DMA_ERR_DMAFIFO_FULL when remosaic capture
 			 * 4MB -> 16MB captreu setting to MIF MAX level when 16MB scenario
 			 */
-			if (frame->shot_ext->setfile == ISS_SUB_SCENARIO_FRONT_REMOSAIC_CAPTURE_WDR_AUTO) {
+			if ((frame->shot_ext->setfile == ISS_SUB_SCENARIO_FRONT_REMOSAIC_CAPTURE_WDR_AUTO)
+				|| (frame->shot_ext->setfile == ISS_SUB_SCENARIO_FRONT_REMOSAIC_CAPTURE)
+				|| (frame->shot_ext->setfile == ISS_SUB_SCENARIO_FRONT_REMOSAIC_CAPTURE_WDR_ON)) {
 				mif_qos = fimc_is_get_qos(core, FIMC_IS_DVFS_MIF, FIMC_IS_SN_MAX);
 				pm_qos_update_request(&exynos_isp_qos_mem, mif_qos);
-				info("[REMOSAIC]: setting to max MIF(%d)\n", mif_qos);
+				info("[REMOSAIC][%d]: setting to max MIF(%d)\n", frame->shot_ext->setfile, mif_qos);
 			}
 #endif
 		}

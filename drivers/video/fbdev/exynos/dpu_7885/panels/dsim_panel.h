@@ -40,16 +40,12 @@ extern struct dsim_lcd_driver s6e3fa7_mipi_lcd_driver;
 extern struct dsim_lcd_driver td4101_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_HX8279D_GTA3XLLTE)
 extern struct dsim_lcd_driver hx8279d_mipi_lcd_driver;
-#elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_NT36672A_M20)
-extern struct dsim_lcd_driver nt36672a_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_HX83112A_M20)
 extern struct dsim_lcd_driver hx83112a_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_EA8076_M30)
 extern struct dsim_lcd_driver ea8076_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_EA8076_A30)
 extern struct dsim_lcd_driver ea8076_mipi_lcd_driver;
-#elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_S6E3AA2_A40)
-extern struct dsim_lcd_driver s6e3aa2_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_HX8279D_WISDOM)
 extern struct dsim_lcd_driver hx8279d_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_S6E8FC0_A20)
@@ -66,12 +62,19 @@ extern struct dsim_lcd_driver hx83102d_mipi_lcd_driver;
 extern struct dsim_lcd_driver s6d7aa0_mipi_lcd_driver;
 #elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_S6E8FC0_A30C)
 extern struct dsim_lcd_driver s6e8fc0_mipi_lcd_driver;
+#elif IS_ENABLED(CONFIG_EXYNOS_DECON_LCD_S6E8FC1_A30S)
+extern struct dsim_lcd_driver s6e8fc1_mipi_lcd_driver;
 #else
 extern struct dsim_lcd_driver s6e3fa3_mipi_lcd_driver;
 #endif
 
 struct dsim_device;
 extern void dsim_register_panel(struct dsim_device *dsim);
-extern int register_lcd_driver(struct dsim_lcd_driver *drv);
+extern int replace_lcd_driver(struct dsim_lcd_driver *drv);
+
+#if defined(CONFIG_EXYNOS_DECON_MDNIE_LITE)
+#define CONFIG_EXYNOS_DECON_MDNIE	CONFIG_EXYNOS_DECON_MDNIE_LITE
+#endif
 
 #endif
+

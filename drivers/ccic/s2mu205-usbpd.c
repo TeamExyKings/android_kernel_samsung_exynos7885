@@ -35,14 +35,11 @@
 #include <linux/muic/muic_notifier.h>
 #endif /* CONFIG_MUIC_NOTIFIER */
 #include <linux/sec_batt.h>
-#if defined(CONFIG_PM_S2MU205)
-#include "../battery_v2/include/s2mu205_pmeter.h"
 
-#endif
 #if defined(CONFIG_BATTERY_SAMSUNG)
 #include <linux/battery/sec_charging_common.h>
 #else
-#include <linux/power/s2mu004_charger_common.h>
+#include <linux/power/s2mu205_charger_common.h>
 #endif
 #if defined(CONFIG_USB_HOST_NOTIFY) || defined(CONFIG_USB_HW_PARAM)
 #include <linux/usb_notify.h>
@@ -106,6 +103,26 @@ char *rid_text[] = {
 #if defined(CONFIG_CCIC_NOTIFIER)
 extern struct device *ccic_device;
 #endif
+
+static void s2mu205_usbpd_test_read(struct s2mu205_usbpd_data *usbpd_data)
+{
+	struct i2c_client *i2c = usbpd_data->i2c;
+	u8 data[10];
+
+	s2mu205_usbpd_read_reg(i2c, 0x1, &data[0]);
+	s2mu205_usbpd_read_reg(i2c, 0x18, &data[1]);
+	s2mu205_usbpd_read_reg(i2c, 0x27, &data[2]);
+	s2mu205_usbpd_read_reg(i2c, 0x28, &data[3]);
+	s2mu205_usbpd_read_reg(i2c, 0x40, &data[4]);
+	s2mu205_usbpd_read_reg(i2c, 0xe2, &data[5]);
+	s2mu205_usbpd_read_reg(i2c, 0xb3, &data[6]);
+	s2mu205_usbpd_read_reg(i2c, 0xb4, &data[7]);
+	s2mu205_usbpd_read_reg(i2c, 0xf7, &data[8]);
+
+	pr_info("%s, 0x1(%x) 0x18(%x) 0x27(%x) 0x28(%x) 0x40(%x) 0xe2(%x) 0xb3(%x) 0xb4(%x) 0xf7(%X)\n",
+			__func__, data[0], data[1], data[2], data[3], data[4],
+										data[5], data[6], data[7], data[8]);
+}
 
 void s2mu205_rprd_mode_change(struct s2mu205_usbpd_data *usbpd_data, u8 mode)
 {
@@ -176,34 +193,6 @@ void vbus_turn_on_ctrl(struct s2mu205_usbpd_data *usbpd_data, bool enable)
 	}
 }
 
-static void s2mu205_usbpd_get_cc_voltage(struct s2mu205_usbpd_data *usbpd_data)
-{
-#ifdef CONFIG_PM_S2MU205
-	struct power_supply *psy_pm = usbpd_data->psy_pm;
-	union power_supply_propval val1, val2;
-	int ret = 0;
-
-	if (psy_pm) {
-		ret = psy_pm->desc->get_property(psy_pm, POWER_SUPPLY_PROP_VCC1, &val1);
-		ret = psy_pm->desc->get_property(psy_pm, POWER_SUPPLY_PROP_VCC2, &val2);
-	} else {
-		pr_err("%s: Fail to get pmeter\n", __func__);
-		return;
-	}
-
-	if (ret) {
-			pr_err("%s: fail to set power_suppy pmeter property(%d)\n",
-		__func__, ret);
-	} else {
-		usbpd_data->pm_cc1 = val1.intval;
-		usbpd_data->pm_cc2 = val2.intval;
-	}
-	pr_info("%s pm_cc1 : %d, pm_cc2 : %d\n", __func__, val1.intval, val2.intval);
-#else
-	return;
-#endif
-}
-
 #if defined(CONFIG_CCIC_NOTIFIER)
 static void process_dr_swap(struct s2mu205_usbpd_data *usbpd_data)
 {
@@ -237,6 +226,37 @@ static void process_dr_swap(struct s2mu205_usbpd_data *usbpd_data)
 		__func__, usbpd_data->is_host, usbpd_data->is_client);
 }
 #endif
+
+static void s2mu205_pr_swap(void *_data, int val)
+{
+	struct usbpd_data *data = (struct usbpd_data *) _data;
+	struct s2mu205_usbpd_data *pdic_data = data->phy_driver_data;
+
+	if (val == USBPD_SINK_OFF) {
+		ccic_event_work(pdic_data, CCIC_NOTIFY_DEV_BATTERY,
+			CCIC_NOTIFY_ID_ATTACH, 0, 0);
+	} else if (val == USBPD_SOURCE_ON) {
+#if defined(CONFIG_DUAL_ROLE_USB_INTF)
+		pdic_data->power_role_dual = DUAL_ROLE_PROP_PR_SRC;
+#elif defined(CONFIG_TYPEC)
+		pdic_data->typec_power_role = TYPEC_SOURCE;
+		typec_set_pwr_role(pdic_data->port, pdic_data->typec_power_role);
+#endif
+		ccic_event_work(pdic_data, CCIC_NOTIFY_DEV_MUIC,
+			CCIC_NOTIFY_ID_ROLE_SWAP, 1/* source */, 0);
+	} else if (val == USBPD_SOURCE_OFF) {
+		ccic_event_work(pdic_data, CCIC_NOTIFY_DEV_BATTERY,
+			CCIC_NOTIFY_ID_ATTACH, 0, 0);
+#if defined(CONFIG_DUAL_ROLE_USB_INTF)
+		pdic_data->power_role_dual = DUAL_ROLE_PROP_PR_SNK;
+#elif defined(CONFIG_TYPEC)
+		pdic_data->typec_power_role = TYPEC_SINK;
+		typec_set_pwr_role(pdic_data->port, pdic_data->typec_power_role);
+#endif
+		ccic_event_work(pdic_data, CCIC_NOTIFY_DEV_MUIC,
+			CCIC_NOTIFY_ID_ROLE_SWAP, 0/* sink */, 0);
+	}
+}
 
 static int s2mu205_usbpd_read_reg(struct i2c_client *i2c, u8 reg, u8 *dest)
 {
@@ -316,6 +336,7 @@ static int s2mu205_usbpd_write_reg(struct i2c_client *i2c, u8 reg, u8 value)
 			inc_hw_param(o_notify, USB_CCIC_I2C_ERROR_COUNT);
 #endif
 	}
+
 	return ret;
 }
 
@@ -506,14 +527,14 @@ static void s2mu205_assert_rd(void *_data)
 	struct s2mu205_usbpd_data *pdic_data = data->phy_driver_data;
 	struct i2c_client *i2c = pdic_data->i2c;
 	u8 val;
-	u8 cc1_val, cc2_val;
 
+#if 0
 	s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_MON1, &val);
 
 	cc1_val = val & S2MU205_REG_CTRL_MON_CC1_MASK;
 	cc2_val = (val & S2MU205_REG_CTRL_MON_CC2_MASK) >> S2MU205_REG_CTRL_MON_CC2_SHIFT;
-
-	if (cc1_val == 2) {
+#endif
+	if (pdic_data->cc2_val == 2) {
 		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, &val);
 		val = (val & ~S2MU205_REG_PLUG_CTRL_CC_MANUAL_MASK) |
 				S2MU205_REG_PLUG_CTRL_CC1_MANUAL_ON;
@@ -528,7 +549,7 @@ static void s2mu205_assert_rd(void *_data)
 		}
 	}
 
-	if (cc2_val == 2) {
+	if (pdic_data->cc1_val == 2) {
 		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, &val);
 		val = (val & ~S2MU205_REG_PLUG_CTRL_CC_MANUAL_MASK) |
 				S2MU205_REG_PLUG_CTRL_CC2_MANUAL_ON;
@@ -758,6 +779,15 @@ out:
 	return 0;
 }
 
+static void s2mu205_soft_reset(void *_data)
+{
+	struct usbpd_data *data = (struct usbpd_data *) _data;
+	struct s2mu205_usbpd_data *pdic_data = data->phy_driver_data;
+	struct i2c_client *i2c = pdic_data->i2c;
+
+	s2mu205_self_soft_reset(i2c);
+}
+
 static int s2mu205_hard_reset(void *_data)
 {
 	struct usbpd_data *data = (struct usbpd_data *) _data;
@@ -906,6 +936,14 @@ static int s2mu205_set_cc_control(void *_data, int val)
 	struct s2mu205_usbpd_data *pdic_data = data->phy_driver_data;
 
 	return s2mu205_usbpd_set_cc_control(pdic_data, val);
+}
+
+static void s2mu205_set_pwr_opmode(void *_data, int mode)
+{
+	struct usbpd_data *data = (struct usbpd_data *) _data;
+	struct s2mu205_usbpd_data *pdic_data = data->phy_driver_data;
+
+	typec_set_pwr_opmode(pdic_data->port, mode);
 }
 
 static int s2mu205_set_vconn_source(void *_data, int val)
@@ -1236,12 +1274,51 @@ void s2mu205_control_option_command (struct s2mu205_usbpd_data *pdic_data, int c
 }
 #endif
 
+#if defined(CONFIG_CCIC_MANUAL_QBAT) && !defined(CONFIG_SEC_FACTORY)
+static void s2mu205_manual_qbat_control(struct s2mu205_usbpd_data *pdic_data, int rid)
+{
+	struct power_supply *psy_charger;
+	union power_supply_propval val;
+	int ret = 0;
+
+	pr_info("%s, rid=%d\n", __func__, rid);
+	psy_charger = get_power_supply_by_name("s2mu205-charger");
+
+	if (psy_charger == NULL) {
+		pr_err("%s: Fail to get psy charger\n", __func__);
+		return;
+	}
+
+	switch (rid) {
+	case REG_RID_301K:
+	case REG_RID_523K:
+		val.intval = 1;
+		break;
+	default:
+		val.intval = 0;
+		break;
+	}
+
+	ret = psy_charger->desc->set_property(psy_charger,
+			POWER_SUPPLY_PROP_FACTORY_MODE, &val);
+
+	if (ret)
+		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
+			__func__, ret);
+}
+#endif
+
 static void s2mu205_notify_pdic_rid(struct s2mu205_usbpd_data *pdic_data, int rid)
 {
 #if defined(CONFIG_CCIC_NOTIFIER)
 	pdic_data->is_factory_mode = false;
 	if (rid == RID_523K)
 		pdic_data->is_factory_mode = true;
+
+#if defined(CONFIG_CCIC_MANUAL_QBAT) && !defined(CONFIG_SEC_FACTORY)
+		s2mu205_manual_qbat_control(pdic_data, rid);
+#endif
+
 	/* rid */
 	ccic_event_work(pdic_data,
 		CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_RID, rid/*rid*/, 0);
@@ -1406,7 +1483,7 @@ int s2mu205_usbpd_lpm_check(struct s2mu205_usbpd_data *pdic_data)
 }
 
 void s2mu205_usbpd_set_mode(struct s2mu205_usbpd_data *pdic_data,
-													CCIC_LPM_MODE_SEL mode)
+	CCIC_LPM_MODE_SEL mode)
 {
 	u8 data_lpm = 0;
 	struct i2c_client *i2c = pdic_data->i2c;
@@ -1425,7 +1502,7 @@ void s2mu205_usbpd_set_mode(struct s2mu205_usbpd_data *pdic_data,
 }
 
 void s2mu205_usbpd_set_vbus_wakeup(struct s2mu205_usbpd_data *pdic_data,
-													CCIC_VBUS_WAKEUP_SEL sel)
+	CCIC_VBUS_WAKEUP_SEL sel)
 {
 	struct i2c_client *i2c = pdic_data->i2c;
 	u8 data = 0;
@@ -1462,7 +1539,7 @@ int s2mu205_get_plug_monitor(struct s2mu205_usbpd_data *pdic_data, u8 *data)
 
 	data[0] = reg_val & S2MU205_REG_CTRL_MON_CC1_MASK;
 	data[1] = (reg_val & S2MU205_REG_CTRL_MON_CC2_MASK) >> S2MU205_REG_CTRL_MON_CC2_SHIFT;
-	pr_info("%s, water cc mon cc1 : 0x%X, cc2 : 0x%X\n", __func__, data[0], data[1]);
+	pr_info("%s, cc mon cc1 : 0x%X, cc2 : 0x%X\n", __func__, data[0], data[1]);
 
 	return ret;
 }
@@ -1547,7 +1624,7 @@ void _s2mu205_set_water_detect_pre_cond(struct s2mu205_usbpd_data *pdic_data)
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PD_CTRL, data);
 
 	s2mu205_usbpd_read_reg(i2c, S2MU205_REG_ANALOG_OTP_04, &data);
-	data |= S2MU205_REG_CC1_RS_SW_ON_MASK | S2MU205_REG_CC2_RS_SW_ON_MASK;
+	data |= (S2MU205_REG_CC1_RS_SW_ON_MASK | S2MU205_REG_CC2_RS_SW_ON_MASK);
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_ANALOG_OTP_04, data);
 
 	msleep(300);
@@ -1562,6 +1639,8 @@ void _s2mu205_set_water_detect_pre_cond(struct s2mu205_usbpd_data *pdic_data)
 	data &= ~S2MU205_REG_LPMPUI_SEL_MASK;
 	data |= S2MU205_REG_LPMPUI_SEL_1UA_MASK;
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_ANALOG_OTP_08, data);
+
+	msleep(50);
 }
 
 void _s2mu205_set_water_detect_post_cond(struct s2mu205_usbpd_data *pdic_data)
@@ -1575,6 +1654,60 @@ void _s2mu205_set_water_detect_post_cond(struct s2mu205_usbpd_data *pdic_data)
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_ANALOG_OTP_04, data);
 }
 
+static void _s2mu205_pdic_cc_discharging(struct s2mu205_usbpd_data *pdic_data, bool enable)
+{
+	struct i2c_client *i2c = pdic_data->i2c;
+	u8 val = 0;
+	static u8 prev_val = 0;
+	static bool is_discharged = false;
+
+	pr_info("%s enable(%d), is_discharged(%d)", __func__, enable, is_discharged);
+
+	if (enable && is_discharged == false) {
+		/* Set Discharging */
+		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_PORT, &val);
+		prev_val = val;
+		val &= ~(S2MU205_REG_PLUG_CTRL_MODE_MASK | S2MU205_REG_PLUG_CTRL_RP_SEL_MASK);
+		val |= S2MU205_REG_PLUG_CTRL_RP0 | S2MU205_REG_PLUG_CTRL_DRP;
+		s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_PORT, val);
+
+		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, &val);
+		val &= ~S2MU205_REG_PLUG_CTRL_FSM_MANUAL_INPUT_MASK;
+		val |= S2MU205_REG_PLUG_CTRL_FSM_ATTACHED_SNK;
+		s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, val);
+
+		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_RpRd, &val);
+		val |= S2MU205_REG_PLUG_CTRL_FSM_MANUAL_EN;
+		s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_RpRd, val);
+
+		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, &val);
+		val &= ~S2MU205_REG_PLUG_CTRL_FSM_MANUAL_INPUT_MASK;
+		val |= S2MU205_REG_PLUG_CTRL_FSM_ATTACHED_SRC;
+		s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, val);
+
+		is_discharged = true;
+		usleep_range(1000, 1100);
+	} else if (enable == false && is_discharged) {
+		/* Restore Reg */
+		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, &val);
+		val &= ~S2MU205_REG_PLUG_CTRL_FSM_MANUAL_INPUT_MASK;
+		val |= S2MU205_REG_PLUG_CTRL_FSM_ATTACHED_SNK;
+		s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, val);
+
+		s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_PORT, prev_val);
+
+		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_RpRd, &val);
+		val &= ~S2MU205_REG_PLUG_CTRL_FSM_MANUAL_EN;
+		s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_RpRd, val);
+
+		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, &val);
+		val &= ~S2MU205_REG_PLUG_CTRL_FSM_MANUAL_INPUT_MASK;
+		s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, val);
+
+		is_discharged = false;
+	}
+}
+
 static void _s2mu205_pdic_handle_water_detection(struct s2mu205_usbpd_data *pdic_data)
 {
 #if defined(CONFIG_CCIC_NOTIFIER)
@@ -1586,6 +1719,17 @@ static void _s2mu205_pdic_handle_water_detection(struct s2mu205_usbpd_data *pdic
 	pdic_data->is_water_detect = true;
 }
 
+static void _s2mu205_pdic_handle_dry_detection(struct s2mu205_usbpd_data *pdic_data)
+{
+	pr_info("%s: CCIC dry detected", __func__);
+
+#if defined(CONFIG_CCIC_NOTIFIER)
+	ccic_event_work(pdic_data, CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_WATER,
+		CCIC_NOTIFY_DETACH, 0);
+#endif
+	pdic_data->is_water_detect = false;
+}
+
 static void _s2mu205_pdic_transfer_to_water(struct s2mu205_usbpd_data *pdic_data)
 {
 #if defined(CONFIG_USB_HW_PARAM) && !defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
@@ -1593,6 +1737,9 @@ static void _s2mu205_pdic_transfer_to_water(struct s2mu205_usbpd_data *pdic_data
 #endif
 	pr_info("%s: CCIC water detected", __func__);
 	s2mu205_set_irq_enable(pdic_data, 0, 0, 0, 0, 0, 0);
+	vbus_turn_on_ctrl(pdic_data, VBUS_OFF);
+	ccic_event_work(pdic_data, CCIC_NOTIFY_DEV_USB, CCIC_NOTIFY_ID_USB,
+		0/*attach*/, USB_STATUS_NOTIFY_DETACH);
 	_s2mu205_pdic_handle_water_detection(pdic_data);
 #if defined(CONFIG_USB_HW_PARAM) && !defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
 	if (o_notify)
@@ -1604,11 +1751,11 @@ static void s2mu205_pdic_water_detect_handler(struct work_struct *work)
 {
 	struct s2mu205_usbpd_data *pdic_data =
 		container_of(work, struct s2mu205_usbpd_data, water_detect_handler.work);
+	struct i2c_client *i2c = pdic_data->i2c;
 	int i = 0;
+	u8 cc_val[2] = {0,};
 
-	pr_info("%s enter", __func__);
-	mutex_lock(&pdic_data->_mutex);
-	s2mu205_set_irq_enable(pdic_data, 0, 0, 0, 0, 0, 0);
+	mutex_lock(&pdic_data->water_mutex);
 	/*
 	 * Cancel the detect handler,
 	 * in case the muic notifies cable attach or dry signal,
@@ -1616,26 +1763,33 @@ static void s2mu205_pdic_water_detect_handler(struct work_struct *work)
 	 * or ccic already detected the water.
 	 */
 	if (!pdic_data->is_muic_water_detect
-		|| pdic_data->is_water_detect) {
+			|| pdic_data->is_water_detect) {
 		pr_info("%s: detect handler is canceled", __func__);
 		goto WATER_OUT;
 	}
+	s2mu205_set_irq_enable(pdic_data, 0, 0, 0, 0, 0, 0);
+	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RP, S2MU205_THRESHOLD_600MV);
+	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RD, S2MU205_THRESHOLD_300MV);
 
+	pr_info("%s, 1st chk", __func__);
 	for (i = 0; i < 3; i++) {
 		_s2mu205_set_water_detect_pre_cond(pdic_data);
 		msleep(200);
-		s2mu205_usbpd_get_cc_voltage(pdic_data);
-		if (IS_CC_WATER(pdic_data->pm_cc1, pdic_data->pm_cc2)) {
-			_s2mu205_pdic_transfer_to_water(pdic_data);
-			break;
-		}
+		s2mu205_get_plug_monitor(pdic_data, cc_val);
 		_s2mu205_set_water_detect_post_cond(pdic_data);
+		if (IS_CC_WATER(cc_val[0], cc_val[1])) {
+			_s2mu205_pdic_transfer_to_water(pdic_data);
+			goto WATER_OUT;
+		}
 	}
 
 	if (!pdic_data->is_water_detect) {
 		msleep(50);
-		s2mu205_usbpd_get_cc_voltage(pdic_data);
-		if (IS_CC_WATER_POST(pdic_data->pm_cc1, pdic_data->pm_cc2)) {
+		pr_info("%s, 2nd chk", __func__);
+		_s2mu205_pdic_cc_discharging(pdic_data, true);
+		s2mu205_get_plug_monitor(pdic_data, cc_val);
+		_s2mu205_pdic_cc_discharging(pdic_data, false);
+		if (IS_CC_POST_WATER(cc_val[0], cc_val[1])) {
 			_s2mu205_pdic_transfer_to_water(pdic_data);
 			goto WATER_OUT;
 		}
@@ -1646,12 +1800,18 @@ static void s2mu205_pdic_water_detect_handler(struct work_struct *work)
 	}
 
 	pr_info("%s: water is not detected in CC.", __func__);
+	if (pdic_data->is_water_detect) {
+		pr_info("%s: Mutex Conflict occured", __func__);
+		goto WATER_OUT;
+	}
+	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RP, pdic_data->rp_threshold);
+	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RD, pdic_data->rd_threshold);
 	s2mu205_set_normal_mode(pdic_data);
 	msleep(50);
 	s2mu205_set_irq_enable(pdic_data, ENABLED_INT_0, ENABLED_INT_1,
-				ENABLED_INT_2, ENABLED_INT_3, ENABLED_INT_4, ENABLED_INT_5);
+		ENABLED_INT_2, ENABLED_INT_3, ENABLED_INT_4, ENABLED_INT_5);
 WATER_OUT:
-	mutex_unlock(&pdic_data->_mutex);
+	mutex_unlock(&pdic_data->water_mutex);
 	return;
 }
 
@@ -1659,57 +1819,50 @@ static void s2mu205_pdic_water_dry_handler(struct work_struct *work)
 {
 	struct s2mu205_usbpd_data *pdic_data =
 		container_of(work, struct s2mu205_usbpd_data, water_dry_handler.work);
+	struct i2c_client *i2c = pdic_data->i2c;
 	int i = 0;
-	int vcc1[2] = {0,};
-	int vcc2[2] = {0,};
+	u8 cc_val[2] = {0,};
 
-	mutex_lock(&pdic_data->_mutex);
-	pr_info("%s enter", __func__);
-	s2mu205_set_irq_enable(pdic_data, 0, 0, 0, 0, 0, 0);
-
+	mutex_lock(&pdic_data->water_mutex);
 	if (!pdic_data->is_water_detect) {
 		pr_info("%s is canceled : already dried", __func__);
-		goto done;
+		goto DRY_OUT;
 	}
+	s2mu205_set_irq_enable(pdic_data, 0, 0, 0, 0, 0, 0);
+	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RP, S2MU205_THRESHOLD_600MV);
+	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RD, S2MU205_THRESHOLD_300MV);
 
+	pr_info("%s, 1st chk", __func__);
 	for (i = 0; i < 3; i++) {
-		/* Detect Curr Src */
 		_s2mu205_set_water_detect_pre_cond(pdic_data);
 		msleep(200);
-		
-		/* 1st Measure */
-		s2mu205_usbpd_get_cc_voltage(pdic_data);
-		vcc1[0] = pdic_data->pm_cc1;
-		vcc2[0] = pdic_data->pm_cc2;
-
-		/* Discharging */
+		s2mu205_get_plug_monitor(pdic_data, cc_val);
 		_s2mu205_set_water_detect_post_cond(pdic_data);
-		msleep(50);
-
-		/* 2nd Measure : Potential Power */
-		s2mu205_usbpd_get_cc_voltage(pdic_data);
-		vcc1[1] = pdic_data->pm_cc1;
-		vcc2[1] = pdic_data->pm_cc2;
-
-		/* Compensation */
-		pdic_data->pm_cc1 = vcc1[0] - vcc1[1];
-		pdic_data->pm_cc2 = vcc2[0] - vcc2[1];
-
-		if (IS_CC_DRY(pdic_data->pm_cc1, pdic_data->pm_cc2)) {
-			pr_info("%s: CCIC dry detected", __func__);
-#if defined(CONFIG_CCIC_NOTIFIER)
-			ccic_event_work(pdic_data,
-				CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_WATER, CCIC_NOTIFY_DETACH, 0);
-#endif
-			goto done;
+		if (IS_CC_DRY(cc_val[0], cc_val[1])) {
+			_s2mu205_pdic_handle_dry_detection(pdic_data);
+			goto DRY_OUT;
 		}
-		_s2mu205_set_water_detect_post_cond(pdic_data);
-		usleep_range(10000, 11000);
 	}
+
+	if (pdic_data->is_water_detect) {
+		msleep(50);
+		pr_info("%s, 2nd chk", __func__);
+		_s2mu205_pdic_cc_discharging(pdic_data, true);
+		s2mu205_get_plug_monitor(pdic_data, cc_val);
+		_s2mu205_pdic_cc_discharging(pdic_data, false);
+		if (IS_CC_POST_DRY(cc_val[0], cc_val[1])) {
+			_s2mu205_pdic_handle_dry_detection(pdic_data);
+			goto DRY_OUT;
+		}
+	}
+	_s2mu205_set_water_detect_post_cond(pdic_data);
+	usleep_range(10000, 11000);
 	pr_info("%s : CC is not dried yet", __func__);
 	_s2mu205_pdic_transfer_to_water(pdic_data);
-done:
-	mutex_unlock(&pdic_data->_mutex);
+DRY_OUT:
+	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RP, pdic_data->rp_threshold);
+	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RD, pdic_data->rd_threshold);
+	mutex_unlock(&pdic_data->water_mutex);
 	return;
 }
 
@@ -1720,7 +1873,7 @@ static void s2mu205_usbpd_otg_attach(struct s2mu205_usbpd_data *pdic_data)
 #endif
 	struct i2c_client *i2c = pdic_data->i2c;
 	struct device *dev = &i2c->dev;
-	
+
 	/* otg */
 	pdic_data->is_host = HOST_ON;
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
@@ -1915,11 +2068,23 @@ static void s2mu205_usbpd_prevent_watchdog_reset(
 						ENABLED_INT_2_WAKEUP, ENABLED_INT_3, ENABLED_INT_4,
 															ENABLED_INT_5);
 			s2mu205_usbpd_set_vbus_wakeup(pdic_data, VBUS_WAKEUP_ENABLE);
+			usleep_range(1000, 1200);
 			s2mu205_usbpd_read_reg(i2c, S2MU205_REG_INT_STATUS2, &val);
 			if (val & S2MU205_REG_INT_STATUS2_WAKEUP)
 				pr_info("%s auto wakeup success\n", __func__);
-			else
-				s2mu205_usbpd_set_mode(pdic_data, PD_NORMAL_MODE);
+			else {
+				msleep(22);
+				s2mu205_usbpd_set_vbus_wakeup(pdic_data, VBUS_WAKEUP_DISABLE);
+				usleep_range(1000, 1200);
+				s2mu205_usbpd_set_vbus_wakeup(pdic_data, VBUS_WAKEUP_ENABLE);
+				usleep_range(1000, 1200);
+				s2mu205_usbpd_read_reg(i2c, S2MU205_REG_INT_STATUS2, &val);
+				if (val & S2MU205_REG_INT_STATUS2_WAKEUP)
+					pr_info("%s auto wakeup success\n", __func__);
+				else
+					s2mu205_usbpd_set_mode(pdic_data, PD_NORMAL_MODE);
+			}
+
 			s2mu205_set_irq_enable(pdic_data, ENABLED_INT_0, ENABLED_INT_1,
 							ENABLED_INT_2, ENABLED_INT_3, ENABLED_INT_4,
 															ENABLED_INT_5);
@@ -1989,14 +2154,20 @@ static void s2mu205_vbus_short_check(struct s2mu205_usbpd_data *pdic_data)
 	pdic_data->vbus_short_check = true;
 }
 
-#if !defined(CONFIG_SEC_FACTORY)
+#if defined(CONFIG_SEC_FACTORY)
+int s2mu205_power_off_water_check(struct s2mu205_usbpd_data *pdic_data)
+#else
 static void s2mu205_power_off_water_check(struct s2mu205_usbpd_data *pdic_data)
+#endif
 {
 	struct i2c_client *i2c = pdic_data->i2c;
 	struct device *dev = pdic_data->dev;
 	u8 val, prev_val, data_lpm = 0;
 	u8 cc1_val, cc2_val;
 	int retry = 0;
+#if defined(CONFIG_SEC_FACTORY)
+	int ret = true;
+#endif
 
 	mutex_lock(&pdic_data->_mutex);
 	mutex_lock(&pdic_data->lpm_mutex);
@@ -2021,13 +2192,14 @@ static void s2mu205_power_off_water_check(struct s2mu205_usbpd_data *pdic_data)
 	s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_RpRd, &val);
 	val |= S2MU205_REG_PLUG_CTRL_FSM_MANUAL_EN;
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_RpRd, val);
+	msleep(50);
 
 	s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, &val);
 	val &= ~S2MU205_REG_PLUG_CTRL_FSM_MANUAL_INPUT_MASK;
 	val |= S2MU205_REG_PLUG_CTRL_FSM_ATTACHED_SRC;
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_CC12, val);
 
-	msleep(200);
+	usleep_range(1000, 1100);
 
 	for (retry = 0; retry < 3; retry++) {
 		s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_MON1, &val);
@@ -2041,6 +2213,9 @@ static void s2mu205_power_off_water_check(struct s2mu205_usbpd_data *pdic_data)
 		if (cc1_val == USBPD_Ra || cc2_val == USBPD_Ra)
 			break;
 		else if (retry == 2) {
+#if defined(CONFIG_SEC_FACTORY)
+			ret = false;
+#else
 			pdic_data->lpcharge_water = true;
 			pdic_data->is_water_detect = true;
 			pdic_data->water_detect_cnt = 0;
@@ -2049,6 +2224,7 @@ static void s2mu205_power_off_water_check(struct s2mu205_usbpd_data *pdic_data)
 			ccic_event_work(pdic_data,
 				CCIC_NOTIFY_DEV_MUIC, CCIC_NOTIFY_ID_WATER, CCIC_NOTIFY_ATTACH, 1);
 			ccic_event_work(pdic_data, CCIC_NOTIFY_DEV_BATTERY, CCIC_NOTIFY_ID_WATER, 1, 0);
+#endif	
 		}
 		udelay(5);
 	}
@@ -2076,8 +2252,11 @@ static void s2mu205_power_off_water_check(struct s2mu205_usbpd_data *pdic_data)
 
 	mutex_unlock(&pdic_data->lpm_mutex);
 	mutex_unlock(&pdic_data->_mutex);
+	
+#if defined(CONFIG_SEC_FACTORY)
+	return ret;
+#endif 
 }
-#endif
 
 static void s2mu205_usbpd_detach_init(struct s2mu205_usbpd_data *pdic_data)
 {
@@ -2261,9 +2440,20 @@ static int s2mu205_check_port_detect(struct s2mu205_usbpd_data *pdic_data)
 	struct i2c_client *i2c = pdic_data->i2c;
 	struct device *dev = &i2c->dev;
 	struct usbpd_data *pd_data = dev_get_drvdata(dev);
-	u8 data;
+	u8 data, val;
+	u8 cc1_val = 0, cc2_val = 0;
 	int ret = 0;
 
+	ret = s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_MON1, &val);
+	if (ret < 0)
+		dev_err(dev, "%s, i2c read PLUG_MON1  error\n", __func__);
+
+	cc1_val = val & S2MU205_REG_CTRL_MON_CC1_MASK;
+	cc2_val = (val & S2MU205_REG_CTRL_MON_CC2_MASK) >> S2MU205_REG_CTRL_MON_CC2_SHIFT;
+	
+	pdic_data->cc1_val = cc1_val;
+	pdic_data->cc2_val = cc2_val;
+	
 	ret = s2mu205_usbpd_read_reg(i2c, S2MU205_REG_PLUG_MON2, &data);
 	if (ret < 0)
 		dev_err(dev, "%s, i2c read PLUG_MON2 error\n", __func__);
@@ -2406,6 +2596,9 @@ static irqreturn_t s2mu205_irq_thread(int irq, void *data)
 	unsigned attach_status = 0, rid_status = 0;
 
 	dev_info(dev, "%s\n", __func__);
+	
+	mutex_lock(&pd_data->accept_mutex);
+	mutex_unlock(&pd_data->accept_mutex);
 
 	mutex_lock(&pdic_data->_mutex);
 
@@ -2453,16 +2646,6 @@ static irqreturn_t s2mu205_irq_thread(int irq, void *data)
 			}
 		}
 		s2mu205_usbpd_notify_detach(pdic_data);
-		mutex_lock(&pdic_data->lpm_mutex);
-		if (!pdic_data->lpm_mode) {
-			if (s2mu205_usbpd_lpm_check(pdic_data) > 0) {
-				pr_info("%s force to normal mode\n", __func__);
-				s2mu205_usbpd_set_mode(pdic_data, PD_NORMAL_MODE);
-			}
-			s2mu205_set_irq_enable(pdic_data, ENABLED_INT_0, ENABLED_INT_1,
-				ENABLED_INT_2, ENABLED_INT_3, ENABLED_INT_4, ENABLED_INT_5);
-		}
-		mutex_unlock(&pdic_data->lpm_mutex);
 
 		goto out;
 	}
@@ -2526,10 +2709,13 @@ static int s2mu205_usbpd_reg_init(struct s2mu205_usbpd_data *_data)
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RP_2, S2MU205_THRESHOLD_1200MV);
 #ifdef CONFIG_SEC_FACTORY
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RD, S2MU205_THRESHOLD_385MV);
+	_data->rd_threshold = S2MU205_THRESHOLD_385MV;
 #else
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RD, S2MU205_THRESHOLD_214MV);
+	_data->rd_threshold = S2MU205_THRESHOLD_214MV;
 #endif
 	s2mu205_usbpd_write_reg(i2c, S2MU205_REG_PLUG_CTRL_SET_RP, S2MU205_THRESHOLD_2057MV);
+	_data->rp_threshold = S2MU205_THRESHOLD_2057MV;
 
 	if (_data->vconn_en) {
 		/* Off Manual Rd setup & On Manual Vconn setup */
@@ -2622,6 +2808,7 @@ static void s2mu205_usbpd_init_configure(struct s2mu205_usbpd_data *_data)
 	} else {
 		dev_err(dev, "%s : Initial abnormal state to LPM Mode\n",
 								__func__);
+		s2mu205_usbpd_test_read(_data);
 		pdic_port = s2mu205_check_init_port(_data);
 		s2mu205_set_normal_mode(_data);
 		msleep(25);
@@ -2729,8 +2916,6 @@ static void s2mu205_usbpd_pdic_data_init(struct s2mu205_usbpd_data *_data)
 	_data->vbus_short_check = false;
 	_data->vbus_short_check_cnt = 0;
 	_data->lpcharge_water = false;
-	_data->pm_cc1 = 0;
-	_data->pm_cc2 = 0;
 }
 
 static int of_s2mu205_dt(struct device *dev,
@@ -2788,6 +2973,8 @@ static int s2mu205_usbpd_probe(struct i2c_client *i2c,
 		goto err_return;
 	}
 
+	pdic_data->name = "s2mu205";
+
 	/* save platfom data for gpio control functions */
 	pdic_data->dev = &i2c->dev;
 	pdic_data->i2c = i2c;
@@ -2800,6 +2987,7 @@ static int s2mu205_usbpd_probe(struct i2c_client *i2c,
 	mutex_init(&pdic_data->_mutex);
 	mutex_init(&pdic_data->lpm_mutex);
 	mutex_init(&pdic_data->cc_mutex);
+	mutex_init(&pdic_data->water_mutex);
 
 	s2mu205_usbpd_init_configure(pdic_data);
 	s2mu205_usbpd_pdic_data_init(pdic_data);
@@ -2958,6 +3146,7 @@ static int s2mu205_usbpd_remove(struct i2c_client *i2c)
 		disable_irq_wake(_data->i2c->irq);
 		free_irq(_data->i2c->irq, _data);
 		mutex_destroy(&_data->_mutex);
+		mutex_destroy(&_data->water_mutex);
 		i2c_set_clientdata(_data->i2c, NULL);
 		kfree(_data);
 	}
@@ -2987,6 +3176,7 @@ static usbpd_phy_ops_type s2mu205_ops = {
 	.tx_msg			= s2mu205_tx_msg,
 	.rx_msg			= s2mu205_rx_msg,
 	.hard_reset		= s2mu205_hard_reset,
+	.soft_reset		= s2mu205_soft_reset,
 	.set_power_role		= s2mu205_set_power_role,
 	.get_power_role		= s2mu205_get_power_role,
 	.set_data_role		= s2mu205_set_data_role,
@@ -3000,6 +3190,8 @@ static usbpd_phy_ops_type s2mu205_ops = {
 	.set_otg_control	= s2mu205_set_otg_control,
 	.get_vbus_short_check	= s2mu205_get_vbus_short_check,
 	.set_cc_control		= s2mu205_set_cc_control,
+	.pr_swap			= s2mu205_pr_swap,
+	.set_pwr_opmode		= s2mu205_set_pwr_opmode
 };
 
 #if defined CONFIG_PM

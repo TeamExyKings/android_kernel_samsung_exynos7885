@@ -815,6 +815,7 @@ static int abox_uaif_trigger(struct snd_pcm_substream *substream,
 		int trigger, struct snd_soc_dai *dai)
 {
 	struct device *dev = dai->dev;
+	struct abox_data *data = platform_get_drvdata(to_platform_device(dev));
 	struct snd_soc_codec *codec = dai->codec;
 	enum abox_dai id = dai->id;
 
@@ -831,6 +832,21 @@ static int abox_uaif_trigger(struct snd_pcm_substream *substream,
 					ABOX_MIC_ENABLE_MASK,
 					1 << ABOX_MIC_ENABLE_L);
 		} else {
+			if (id == ABOX_UAIF0) {
+				int route_ctrl0, mixp_value;
+				route_ctrl0 = readl(data->sfr_base + ABOX_ROUTE_CTRL0);
+				if (route_ctrl0 & 0x1) {
+					/* ROUTE_CTRL0[3:0] 0001: Result from SPUS #0(output of MIXP) */
+					mixp_value = readl(data->sfr_base +  ABOX_SPUS_CTRL2);
+					mixp_value |= 0x1;
+					writel(mixp_value, data->sfr_base + ABOX_SPUS_CTRL2);
+					dev_info(dev, "%s(%d), mixp=0x%x\n", __func__, trigger, mixp_value);
+				} else {
+					dev_info(dev, "%s(%d), UAIF0 is not connected to MIXP (%x)\n",
+						__func__, trigger, route_ctrl0 & 0xF);
+				}
+			}
+
 			snd_soc_update_bits(codec, ABOX_UAIF_CTRL0(id),
 					ABOX_SPK_ENABLE_MASK,
 					1 << ABOX_SPK_ENABLE_L);
@@ -4432,7 +4448,6 @@ static void abox_boot_done_work_func(struct work_struct *work)
 	abox_cpu_pm_ipc(dev, true);
 	abox_restore_data(dev);
 	abox_request_cpu_gear(dev, data, DEFAULT_CPU_GEAR_ID, 12);
-	abox_request_dram_on(pdev, dev, false);
 	wake_unlock(&data->wake_lock);
 }
 
@@ -5437,6 +5452,8 @@ static int abox_disable(struct device *dev)
 	cancel_work_sync(&data->change_cpu_gear_work);
 
 	abox_failsafe_report_reset(dev);
+
+	abox_request_dram_on(data->pdev, dev, false);
 
 	return 0;
 }

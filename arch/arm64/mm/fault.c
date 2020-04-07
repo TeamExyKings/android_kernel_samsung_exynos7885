@@ -54,6 +54,10 @@
 static int safe_fault_in_progress = 0;
 static const char *fault_name(unsigned int esr);
 
+#ifdef CONFIG_SEC_DEBUG_AVOID_UNNECESSARY_TRAP
+unsigned long long incorrect_addr = 0;
+#endif
+
 /*
  * Dump out the page tables associated with 'addr' in mm 'mm'.
  */
@@ -118,26 +122,27 @@ int ptep_set_access_flags(struct vm_area_struct *vma,
 	/* only preserve the access flags and write permission */
 	pte_val(entry) &= PTE_AF | PTE_WRITE | PTE_DIRTY;
 
-	/*
-	 * PTE_RDONLY is cleared by default in the asm below, so set it in
-	 * back if necessary (read-only or clean PTE).
-	 */
+	/* set PTE_RDONLY if actual read-only or clean PTE */
 	if (!pte_write(entry) || !pte_sw_dirty(entry))
 		pte_val(entry) |= PTE_RDONLY;
 
 	/*
 	 * Setting the flags must be done atomically to avoid racing with the
-	 * hardware update of the access/dirty state.
+	 * hardware update of the access/dirty state. The PTE_RDONLY bit must
+	 * be set to the most permissive (lowest value) of *ptep and entry
+	 * (calculated as: a & b == ~(~a | ~b)).
 	 */
+	pte_val(entry) ^= PTE_RDONLY;
 	asm volatile("//	ptep_set_access_flags\n"
 	"	prfm	pstl1strm, %2\n"
 	"1:	ldxr	%0, %2\n"
-	"	and	%0, %0, %3		// clear PTE_RDONLY\n"
+	"	eor	%0, %0, %3		// negate PTE_RDONLY in *ptep\n"
 	"	orr	%0, %0, %4		// set flags\n"
+	"	eor	%0, %0, %3		// negate final PTE_RDONLY\n"
 	"	stxr	%w1, %0, %2\n"
 	"	cbnz	%w1, 1b\n"
 	: "=&r" (old_pteval), "=&r" (tmp), "+Q" (pte_val(*ptep))
-	: "L" (~PTE_RDONLY), "r" (pte_val(entry)));
+	: "L" (PTE_RDONLY), "r" (pte_val(entry)));
 
 	flush_tlb_fix_spurious_fault(vma, address);
 	return 1;
@@ -596,7 +601,15 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
 	if ((unhandled_signal(current, inf->sig) && show_unhandled_signals_ratelimited()) || !user_mode(regs))
 		pr_auto(ASL1, "Unhandled fault: %s (0x%08x) at 0x%016lx\n",
 			inf->name, esr, addr);
-	
+
+#ifdef CONFIG_SEC_DEBUG_AVOID_UNNECESSARY_TRAP
+	if (!user_mode(regs)) {
+		/* In case of synchronous external abort */
+		if (inf == fault_info + 16) {
+			incorrect_addr = (unsigned long long)addr;
+		}
+	}
+#endif
 
 #ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
 	if (!user_mode(regs)) {

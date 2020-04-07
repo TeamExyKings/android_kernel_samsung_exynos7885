@@ -170,6 +170,21 @@ config SOC_EXYNOS7884
 	help
 	  This enables support for Lushan (A73/A53)
 
+config J7DUOLTE_DTS
+	bool "Galaxy J7Duo (J720F)"
+	help
+		This enables DTB compilation support for J7Duo.
+
+config JACKPOTLTE_DTS
+	bool "Galaxy A8 (A530F)"
+	help
+		This enables DTB compilation support for A8.
+
+config JACKPOT2LTE_DTS
+	bool "Galaxy A8+ (A730F)"
+	help
+		This enables DTB compilation support for A8+.
+
 config SOC_EXYNOS7883
 	bool "Samsung EXYNOS7883"
 	help
